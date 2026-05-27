@@ -4,7 +4,7 @@
   "figmaPaintingSize": [1601, 2020],
   "loopDurationMs": 30000,
   "phases": {
-    "stillMs": 3000,
+    "stillMs": 500,
     "animateMs": 24000,
     "endStillMs": 3000,
     "fadeMs": 800

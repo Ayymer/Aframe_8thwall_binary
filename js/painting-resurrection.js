@@ -1,11 +1,16 @@
 /**
- * painting-resurrection — video overlay loop aligned to Figma-mapped positions.
- * Config: assets/meta/video-layers.json
+ * painting-resurrection — video overlays on the Ruysch image target.
  */
 (function () {
   const IMG_W = 809;
   const IMG_H = 1024;
+  const TARGET_NAME = 'painting';
   const THREE = AFRAME.THREE;
+
+  let configPromise = fetch('assets/meta/video-layers.json').then((res) => {
+    if (!res.ok) throw new Error(`Config load failed: ${res.status}`);
+    return res.json();
+  });
 
   function clamp(v, lo, hi) {
     return Math.min(hi, Math.max(lo, v));
@@ -46,9 +51,7 @@
 
   function getPhase(loopMs, phases) {
     let t = loopMs;
-    if (t < phases.stillMs) {
-      return { name: 'still', elapsed: t };
-    }
+    if (t < phases.stillMs) return { name: 'still', elapsed: t };
     t -= phases.stillMs;
     if (t < phases.animateMs) {
       return { name: 'animate', elapsed: t, localT: t / phases.animateMs };
@@ -60,11 +63,9 @@
   function phaseOpacity(phase, phases) {
     if (phase.name === 'still') return 0;
     if (phase.name === 'animate') {
-      const fadeIn = clamp(phase.elapsed / phases.fadeMs, 0, 1);
-      return easeInOutCubic(fadeIn);
+      return easeInOutCubic(clamp(phase.elapsed / phases.fadeMs, 0, 1));
     }
-    const fadeOut = 1 - clamp(phase.elapsed / phases.fadeMs, 0, 1);
-    return easeInOutCubic(fadeOut);
+    return easeInOutCubic(1 - clamp(phase.elapsed / phases.fadeMs, 0, 1));
   }
 
   function createChromaMaterial(texture, chroma, opacity) {
@@ -106,9 +107,51 @@
     });
   }
 
-  AFRAME.registerComponent('chromakey-video', {
+  AFRAME.registerComponent('scan-hud', {
+    init() {
+      this.hud = document.createElement('div');
+      this.hud.id = 'scan-hud';
+      this.hud.style.cssText =
+        'position:fixed;top:12px;left:12px;right:12px;z-index:9999;color:#fff;font:14px/1.4 -apple-system,sans-serif;background:rgba(0,0,0,0.65);padding:10px 12px;border-radius:8px;pointer-events:none';
+      document.body.appendChild(this.hud);
+      this.setMessage('Loading…');
+
+      configPromise
+        .then(() => this.setMessage('Scan the printed painting with your camera'))
+        .catch(() => this.setMessage('Config failed to load'));
+
+      this.onFound = (e) => {
+        if (e.detail.name !== TARGET_NAME) return;
+        this.setMessage('Painting recognized — flowers animating');
+        this.el.sceneEl.emit('painting-target-found');
+      };
+
+      this.onLost = (e) => {
+        if (e.detail.name !== TARGET_NAME) return;
+        this.setMessage('Scan the printed painting with your camera');
+        this.el.sceneEl.emit('painting-target-lost');
+      };
+
+      this.el.sceneEl.addEventListener('xrimagefound', this.onFound);
+      this.el.sceneEl.addEventListener('xrimagelost', this.onLost);
+    },
+
+    setMessage(text) {
+      this.hud.textContent = text;
+    },
+
+    remove() {
+      if (this.hud && this.hud.parentNode) {
+        this.hud.parentNode.removeChild(this.hud);
+      }
+      this.el.sceneEl.removeEventListener('xrimagefound', this.onFound);
+      this.el.sceneEl.removeEventListener('xrimagelost', this.onLost);
+    },
+  });
+
+  AFRAME.registerComponent('flower-video', {
     schema: {
-      video: { type: 'selector', selector: 'video' },
+      videoId: { type: 'string' },
       keyColor: { type: 'color', default: '#000000' },
       threshold: { type: 'number', default: 0.06 },
       smoothness: { type: 'number', default: 0.14 },
@@ -118,100 +161,92 @@
     init() {
       this.texture = null;
       this.material = null;
-      this.video = this.data.video;
-      this.bindVideo = this.bindVideo.bind(this);
-      this.onVideoEvent = this.onVideoEvent.bind(this);
+      this.video = document.getElementById(this.data.videoId);
+      this.tryBind = this.tryBind.bind(this);
 
       if (!this.video) {
-        console.error('[chromakey-video] Missing video element', this.el);
+        console.error('[flower-video] missing video', this.data.videoId);
         return;
       }
 
       this.video.muted = true;
       this.video.loop = true;
       this.video.playsInline = true;
-      this.video.setAttribute('playsinline', '');
-      this.video.setAttribute('webkit-playsinline', '');
       this.video.crossOrigin = 'anonymous';
       this.video.preload = 'auto';
+      this.video.setAttribute('playsinline', '');
+      this.video.setAttribute('webkit-playsinline', '');
 
-      this.video.addEventListener('loadeddata', this.onVideoEvent);
-      this.video.addEventListener('canplay', this.onVideoEvent);
+      this.video.addEventListener('loadeddata', this.tryBind);
+      this.video.addEventListener('canplay', this.tryBind);
       this.video.addEventListener('error', () => {
-        console.error('[chromakey-video] Video error', this.video.src, this.video.error);
+        console.error('[flower-video] error', this.data.videoId, this.video.error);
       });
 
       if (this.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        this.bindVideo();
+        this.tryBind();
       } else {
         this.video.load();
       }
     },
 
-    onVideoEvent() {
-      if (this.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        this.bindVideo();
-      }
-    },
-
-    bindVideo() {
-      if (this.material) return;
+    tryBind() {
+      if (this.material || !this.video) return;
+      if (this.video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
 
       const mesh = this.el.getObject3D('mesh');
       if (!mesh) {
-        this.el.addEventListener('loaded', this.bindVideo, { once: true });
+        this.el.addEventListener('loaded', this.tryBind, { once: true });
         return;
       }
 
       this.texture = new THREE.VideoTexture(this.video);
       this.texture.minFilter = THREE.LinearFilter;
       this.texture.magFilter = THREE.LinearFilter;
-      if (THREE.SRGBColorSpace) {
-        this.texture.colorSpace = THREE.SRGBColorSpace;
-      }
 
       this.material = createChromaMaterial(this.texture, this.data, this.data.opacity);
       mesh.material = this.material;
-      this.applyVisibility(this.data.opacity);
+      this.applyOpacity(this.data.opacity);
     },
 
-    applyVisibility(opacity) {
-      const show = opacity > 0.001 && !!this.material;
-      this.el.object3D.visible = show;
+    applyOpacity(opacity) {
       if (this.material) {
         this.material.uniforms.opacity.value = opacity;
       }
+      this.el.object3D.visible = opacity > 0.001 && !!this.material;
     },
 
     setOpacity(opacity) {
       this.data.opacity = opacity;
-      this.applyVisibility(opacity);
+      this.applyOpacity(opacity);
     },
 
-    playVideo() {
+    play() {
       if (!this.video) return;
       const attempt = this.video.play();
       if (attempt && attempt.catch) {
         attempt.catch((err) => {
-          console.warn('[chromakey-video] play failed', this.video.id, err);
+          console.warn('[flower-video] play', this.data.videoId, err);
         });
       }
     },
 
-    pauseVideo() {
+    pause() {
       if (!this.video) return;
       this.video.pause();
       this.video.currentTime = 0;
     },
 
-    update() {
-      this.applyVisibility(this.data.opacity);
+    tick() {
+      if (this.texture && this.video && !this.video.paused) {
+        this.texture.needsUpdate = true;
+      }
     },
 
     remove() {
       if (this.video) {
-        this.video.removeEventListener('loadeddata', this.onVideoEvent);
-        this.video.removeEventListener('canplay', this.onVideoEvent);
+        this.video.removeEventListener('loadeddata', this.tryBind);
+        this.video.removeEventListener('canplay', this.tryBind);
       }
       if (this.texture) this.texture.dispose();
       if (this.material) this.material.dispose();
@@ -226,58 +261,36 @@
     init() {
       this.clock = 0;
       this.config = null;
-      this.layerStates = [];
+      this.layers = [];
       this.lastPhase = null;
+      this.targetFound = false;
 
-      const scene = this.el.sceneEl;
-      const start = () => {
-        fetch(this.data.config)
-          .then((res) => {
-            if (!res.ok) throw new Error(`Config load failed: ${res.status}`);
-            return res.json();
-          })
-          .then((cfg) => {
-            this.config = cfg;
-            this.ensureVideoElements(cfg);
-            requestAnimationFrame(() => this.createVideoLayers(cfg));
-          })
-          .catch((err) => console.error('[painting-resurrection]', err));
+      this.onTargetFound = () => {
+        this.targetFound = true;
+        this.clock = 0;
+        this.lastPhase = null;
+        this.syncPlayback();
+      };
+      this.onTargetLost = () => {
+        this.targetFound = false;
+        this.pauseAll();
       };
 
-      if (scene.hasLoaded) {
-        start();
-      } else {
-        scene.addEventListener('loaded', start, { once: true });
-      }
+      this.el.sceneEl.addEventListener('painting-target-found', this.onTargetFound);
+      this.el.sceneEl.addEventListener('painting-target-lost', this.onTargetLost);
+
+      configPromise
+        .then((cfg) => {
+          this.config = cfg;
+          this.buildLayers(cfg);
+        })
+        .catch((err) => console.error('[painting-resurrection]', err));
     },
 
-    ensureVideoElements(cfg) {
-      cfg.layers.forEach((layer) => {
-        const video = document.getElementById(layer.videoId);
-        if (!video) {
-          console.error('[painting-resurrection] Missing video in DOM', layer.videoId);
-          return;
-        }
-        video.muted = true;
-        video.loop = true;
-        video.playsInline = true;
-        video.crossOrigin = 'anonymous';
-        video.preload = 'auto';
-        if (!video.src) video.src = layer.src;
-        video.load();
-      });
-    },
-
-    createVideoLayers(cfg) {
+    buildLayers(cfg) {
       const chroma = cfg.chromaKey || {};
 
       cfg.layers.forEach((layer, index) => {
-        const video = document.getElementById(layer.videoId);
-        if (!video) {
-          console.error('[painting-resurrection] Missing video', layer.videoId);
-          return;
-        }
-
         const { centerPx, sizePx } = resolveLayerGeometry(layer, cfg);
         const planeW = (sizePx[0] / IMG_W) * cfg.targetWidth;
         const planeH = (sizePx[1] / IMG_H) * cfg.targetHeight;
@@ -288,8 +301,8 @@
         plane.setAttribute('width', planeW);
         plane.setAttribute('height', planeH);
         plane.setAttribute('position', `${pos.x} ${pos.y} ${z}`);
-        plane.setAttribute('chromakey-video', {
-          video: `#${layer.videoId}`,
+        plane.setAttribute('flower-video', {
+          videoId: layer.videoId,
           keyColor: chroma.color || '#000000',
           threshold: chroma.threshold != null ? chroma.threshold : 0.06,
           smoothness: chroma.smoothness != null ? chroma.smoothness : 0.14,
@@ -297,79 +310,64 @@
         });
 
         this.el.appendChild(plane);
-
-        this.layerStates.push({
-          el: plane,
-          video,
-          layer,
-        });
+        this.layers.push({ el: plane });
       });
     },
 
-    getCurrentPhase() {
-      return getPhase(this.clock, this.config.phases);
+    getOpacity() {
+      if (!this.config || !this.targetFound) return 0;
+      return phaseOpacity(getPhase(this.clock, this.config.phases), this.config.phases);
     },
 
-    getCurrentOpacity() {
-      return phaseOpacity(this.getCurrentPhase(), this.config.phases);
-    },
-
-    shouldPlayVideos() {
-      const phase = this.getCurrentPhase();
+    shouldPlay() {
+      if (!this.targetFound || !this.config) return false;
+      const phase = getPhase(this.clock, this.config.phases);
       return phase.name === 'animate' || phase.name === 'endStill';
     },
 
     syncPlayback() {
-      if (this.shouldPlayVideos()) {
-        this.playAllVideos();
-      } else {
-        this.pauseAllVideos();
-      }
+      if (this.shouldPlay()) this.playAll();
+      else this.pauseAll();
     },
 
-    playAllVideos() {
-      this.layerStates.forEach(({ el }) => {
-        const component = el.components['chromakey-video'];
-        if (component) component.playVideo();
+    playAll() {
+      this.layers.forEach(({ el }) => {
+        const c = el.components['flower-video'];
+        if (c) c.play();
       });
     },
 
-    pauseAllVideos() {
-      this.layerStates.forEach(({ el }) => {
-        const component = el.components['chromakey-video'];
-        if (component) component.pauseVideo();
+    pauseAll() {
+      this.layers.forEach(({ el }) => {
+        const c = el.components['flower-video'];
+        if (c) c.pause();
       });
-    },
-
-    updateLayerOpacity(state, opacity) {
-      const component = state.el.components['chromakey-video'];
-      if (component) {
-        component.setOpacity(opacity);
-      }
     },
 
     tick(_time, delta) {
-      if (!this.config || !this.layerStates.length) return;
+      if (!this.config || !this.layers.length) return;
+      if (!this.targetFound) return;
 
       this.clock = (this.clock + delta) % this.config.loopDurationMs;
-      const phase = this.getCurrentPhase();
-      const opacity = this.getCurrentOpacity();
+      const phase = getPhase(this.clock, this.config.phases);
+      const opacity = this.getOpacity();
 
       if (phase.name !== this.lastPhase) {
         this.syncPlayback();
         this.lastPhase = phase.name;
       }
 
-      this.layerStates.forEach((state) => {
-        this.updateLayerOpacity(state, opacity);
-        const component = state.el.components['chromakey-video'];
-        if (component && component.texture) {
-          component.texture.needsUpdate = true;
-        }
-        if (opacity > 0.001 && state.video && state.video.paused) {
-          component && component.playVideo();
-        }
+      this.layers.forEach(({ el }) => {
+        const c = el.components['flower-video'];
+        if (!c) return;
+        c.setOpacity(opacity);
+        if (opacity > 0.001 && c.video && c.video.paused) c.play();
       });
+    },
+
+    remove() {
+      this.el.sceneEl.removeEventListener('painting-target-found', this.onTargetFound);
+      this.el.sceneEl.removeEventListener('painting-target-lost', this.onTargetLost);
     },
   });
 })();
