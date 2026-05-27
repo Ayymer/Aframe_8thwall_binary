@@ -5,6 +5,7 @@
 (function () {
   const IMG_W = 809;
   const IMG_H = 1024;
+  const THREE = AFRAME.THREE;
 
   function clamp(v, lo, hi) {
     return Math.min(hi, Math.max(lo, v));
@@ -59,59 +60,121 @@
     return easeInOutCubic(fadeOut);
   }
 
-  const THREE = AFRAME.THREE;
-
-  AFRAME.registerShader('chromakey', {
-    schema: {
-      src: { type: 'map', is: 'uniform' },
-      color: { type: 'color', is: 'uniform', default: 'black' },
-      threshold: { type: 'number', is: 'uniform', default: 0.08 },
-      smoothness: { type: 'number', is: 'uniform', default: 0.12 },
-      opacity: { type: 'number', is: 'uniform', default: 1 },
-    },
-
-    init(data) {
-      this.material = new THREE.ShaderMaterial({
-        uniforms: {
-          src: { value: data.src },
-          color: { value: new THREE.Color(data.color) },
-          threshold: { value: data.threshold },
-          smoothness: { value: data.smoothness },
-          opacity: { value: data.opacity },
+  function createChromaMaterial(texture, chroma, opacity) {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        map: { value: texture },
+        keyColor: { value: new THREE.Color(chroma.color || '#000000') },
+        threshold: { value: chroma.threshold != null ? chroma.threshold : 0.06 },
+        smoothness: {
+          value: chroma.smoothness != null ? chroma.smoothness : 0.14,
         },
-        vertexShader: [
-          'varying vec2 vUV;',
-          'void main(void) {',
-          '  vUV = uv;',
-          '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
-          '}',
-        ].join('\n'),
-        fragmentShader: [
-          'uniform sampler2D src;',
-          'uniform vec3 color;',
-          'uniform float threshold;',
-          'uniform float smoothness;',
-          'uniform float opacity;',
-          'varying vec2 vUV;',
-          'void main(void) {',
-          '  vec4 tex = texture2D(src, vUV);',
-          '  float dist = length(tex.rgb - color);',
-          '  float alpha = smoothstep(threshold, threshold + smoothness, dist);',
-          '  gl_FragColor = vec4(tex.rgb, tex.a * alpha * opacity);',
-          '}',
-        ].join('\n'),
-        transparent: true,
-        depthWrite: false,
-      });
+        opacity: { value: opacity },
+      },
+      vertexShader: [
+        'varying vec2 vUV;',
+        'void main(void) {',
+        '  vUV = uv;',
+        '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+        '}',
+      ].join('\n'),
+      fragmentShader: [
+        'uniform sampler2D map;',
+        'uniform vec3 keyColor;',
+        'uniform float threshold;',
+        'uniform float smoothness;',
+        'uniform float opacity;',
+        'varying vec2 vUV;',
+        'void main(void) {',
+        '  vec4 tex = texture2D(map, vUV);',
+        '  float dist = length(tex.rgb - keyColor);',
+        '  float alpha = smoothstep(threshold, threshold + smoothness, dist);',
+        '  if (alpha < 0.01) discard;',
+        '  gl_FragColor = vec4(tex.rgb, alpha * opacity);',
+        '}',
+      ].join('\n'),
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+  }
+
+  AFRAME.registerComponent('chromakey-video', {
+    schema: {
+      video: { type: 'selector', selector: 'video' },
+      keyColor: { type: 'color', default: '#000000' },
+      threshold: { type: 'number', default: 0.06 },
+      smoothness: { type: 'number', default: 0.14 },
+      opacity: { type: 'number', default: 0 },
     },
 
-    update(data) {
-      const uniforms = this.material.uniforms;
-      uniforms.src.value = data.src;
-      uniforms.color.value.set(data.color);
-      uniforms.threshold.value = data.threshold;
-      uniforms.smoothness.value = data.smoothness;
-      uniforms.opacity.value = data.opacity;
+    init() {
+      this.texture = null;
+      this.material = null;
+      this.video = this.data.video;
+      this.bindVideo = this.bindVideo.bind(this);
+
+      if (!this.video) {
+        console.error('[chromakey-video] Missing video element', this.el);
+        return;
+      }
+
+      this.video.muted = true;
+      this.video.loop = true;
+      this.video.playsInline = true;
+      this.video.setAttribute('playsinline', '');
+      this.video.setAttribute('webkit-playsinline', '');
+      if (!this.video.getAttribute('crossorigin')) {
+        this.video.crossOrigin = 'anonymous';
+      }
+
+      this.video.addEventListener('loadeddata', this.bindVideo);
+      if (this.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        this.bindVideo();
+      }
+    },
+
+    bindVideo() {
+      if (this.material) return;
+
+      this.texture = new THREE.VideoTexture(this.video);
+      this.texture.minFilter = THREE.LinearFilter;
+      this.texture.magFilter = THREE.LinearFilter;
+      if (THREE.SRGBColorSpace) {
+        this.texture.colorSpace = THREE.SRGBColorSpace;
+      }
+
+      this.material = createChromaMaterial(this.texture, this.data, this.data.opacity);
+      this.el.getObject3D('mesh').material = this.material;
+      this.el.object3D.visible = this.data.opacity > 0.001;
+
+      // Prime decode so the first visible frame is not blank.
+      const prime = this.video.play();
+      if (prime && prime.then) {
+        prime
+          .then(() => {
+            this.video.pause();
+            this.video.currentTime = 0;
+          })
+          .catch(() => {});
+      }
+    },
+
+    update(oldData) {
+      if (!this.material) return;
+      this.material.uniforms.opacity.value = this.data.opacity;
+      this.material.uniforms.threshold.value = this.data.threshold;
+      this.material.uniforms.smoothness.value = this.data.smoothness;
+      this.material.uniforms.keyColor.value.set(this.data.keyColor);
+      this.el.object3D.visible = this.data.opacity > 0.001;
+    },
+
+    remove() {
+      if (this.video) {
+        this.video.removeEventListener('loadeddata', this.bindVideo);
+      }
+      if (this.texture) this.texture.dispose();
+      if (this.material) this.material.dispose();
     },
   });
 
@@ -126,21 +189,29 @@
       this.layerStates = [];
       this.lastPhase = null;
 
-      fetch(this.data.config)
-        .then((res) => {
-          if (!res.ok) throw new Error(`Config load failed: ${res.status}`);
-          return res.json();
-        })
-        .then((cfg) => {
-          this.config = cfg;
-          this.createVideoLayers(cfg);
-        })
-        .catch((err) => console.error('[painting-resurrection]', err));
+      const scene = this.el.sceneEl;
+      const start = () => {
+        fetch(this.data.config)
+          .then((res) => {
+            if (!res.ok) throw new Error(`Config load failed: ${res.status}`);
+            return res.json();
+          })
+          .then((cfg) => {
+            this.config = cfg;
+            this.createVideoLayers(cfg);
+          })
+          .catch((err) => console.error('[painting-resurrection]', err));
+      };
+
+      if (scene.hasLoaded) {
+        start();
+      } else {
+        scene.addEventListener('loaded', start, { once: true });
+      }
     },
 
     createVideoLayers(cfg) {
       const chroma = cfg.chromaKey || {};
-      const assets = document.querySelector('a-assets');
 
       cfg.layers.forEach((layer, index) => {
         const { centerPx, sizePx } = resolveLayerGeometry(layer, cfg);
@@ -148,61 +219,44 @@
         const planeH = (sizePx[1] / IMG_H) * cfg.targetHeight;
         const pos = pxToWorld(centerPx[0], centerPx[1], cfg);
         const z = 0.001 + (layer.zOrder || index) * 0.0005;
-        const videoId = `video-${layer.id}`;
-
-        const video = document.createElement('video');
-        video.setAttribute('id', videoId);
-        video.setAttribute('src', layer.src);
-        video.setAttribute('crossorigin', 'anonymous');
-        video.setAttribute('loop', '');
-        video.setAttribute('playsinline', '');
-        video.setAttribute('webkit-playsinline', '');
-        video.setAttribute('preload', 'auto');
-        video.muted = true;
-        video.playsInline = true;
-        if (assets) {
-          assets.appendChild(video);
-        } else {
-          document.querySelector('a-scene').appendChild(video);
-        }
+        const videoSelector = `#${layer.videoId}`;
 
         const plane = document.createElement('a-plane');
         plane.setAttribute('width', planeW);
         plane.setAttribute('height', planeH);
         plane.setAttribute('position', `${pos.x} ${pos.y} ${z}`);
-        plane.setAttribute('material', {
-          shader: 'chromakey',
-          src: `#${videoId}`,
-          color: chroma.color || '#000000',
-          threshold: chroma.threshold != null ? chroma.threshold : 0.08,
-          smoothness: chroma.smoothness != null ? chroma.smoothness : 0.12,
+        plane.setAttribute('visible', false);
+        plane.setAttribute('chromakey-video', {
+          video: videoSelector,
+          keyColor: chroma.color || '#000000',
+          threshold: chroma.threshold != null ? chroma.threshold : 0.06,
+          smoothness: chroma.smoothness != null ? chroma.smoothness : 0.14,
           opacity: 0,
-          side: 'double',
         });
 
         this.el.appendChild(plane);
 
+        const video = document.querySelector(videoSelector);
         this.layerStates.push({
           el: plane,
           video,
           layer,
-          centerPx,
-          sizePx,
         });
       });
     },
 
     setVideosPlaying(shouldPlay) {
       this.layerStates.forEach(({ video }) => {
+        if (!video) return;
         if (shouldPlay) {
-          if (video.paused) {
-            video.currentTime = 0;
-            const playAttempt = video.play();
-            if (playAttempt && playAttempt.catch) {
-              playAttempt.catch(() => {});
-            }
+          video.currentTime = 0;
+          const playAttempt = video.play();
+          if (playAttempt && playAttempt.catch) {
+            playAttempt.catch((err) => {
+              console.warn('[painting-resurrection] video.play()', err);
+            });
           }
-        } else if (!video.paused) {
+        } else {
           video.pause();
           video.currentTime = 0;
         }
@@ -210,10 +264,12 @@
     },
 
     updateLayerOpacity(state, opacity) {
-      const mat = state.el.getAttribute('material') || {};
-      state.el.setAttribute('material', {
-        ...mat,
-        shader: 'chromakey',
+      const current = state.el.getAttribute('chromakey-video') || {};
+      state.el.setAttribute('chromakey-video', {
+        video: current.video,
+        keyColor: current.keyColor,
+        threshold: current.threshold,
+        smoothness: current.smoothness,
         opacity,
       });
     },
