@@ -94,13 +94,13 @@
 </head>
 <body>
   <div id="video-pool" aria-hidden="true">
-    <video id="video-flower-1" src="assets/video/flower-1.mp4" crossorigin="anonymous" loop muted playsinline webkit-playsinline preload="auto"></video>
-    <video id="video-flower-2" src="assets/video/flower-2.mp4" crossorigin="anonymous" loop muted playsinline webkit-playsinline preload="auto"></video>
-    <video id="video-flower-3" src="assets/video/flower-3.mp4" crossorigin="anonymous" loop muted playsinline webkit-playsinline preload="auto"></video>
-    <video id="video-flower-4" src="assets/video/flower-4.mp4" crossorigin="anonymous" loop muted playsinline webkit-playsinline preload="auto"></video>
-    <video id="video-flower-5" src="assets/video/flower-5.mp4" crossorigin="anonymous" loop muted playsinline webkit-playsinline preload="auto"></video>
-    <video id="video-flower-6" src="assets/video/flower-6.mp4" crossorigin="anonymous" loop muted playsinline webkit-playsinline preload="auto"></video>
-    <video id="video-flower-7" src="assets/video/flower-7.mp4" crossorigin="anonymous" loop muted playsinline webkit-playsinline preload="auto"></video>
+    <video id="video-flower-1" src="assets/video/flower-1.mp4" loop muted playsinline webkit-playsinline preload="auto"></video>
+    <video id="video-flower-2" src="assets/video/flower-2.mp4" loop muted playsinline webkit-playsinline preload="auto"></video>
+    <video id="video-flower-3" src="assets/video/flower-3.mp4" loop muted playsinline webkit-playsinline preload="auto"></video>
+    <video id="video-flower-4" src="assets/video/flower-4.mp4" loop muted playsinline webkit-playsinline preload="auto"></video>
+    <video id="video-flower-5" src="assets/video/flower-5.mp4" loop muted playsinline webkit-playsinline preload="auto"></video>
+    <video id="video-flower-6" src="assets/video/flower-6.mp4" loop muted playsinline webkit-playsinline preload="auto"></video>
+    <video id="video-flower-7" src="assets/video/flower-7.mp4" loop muted playsinline webkit-playsinline preload="auto"></video>
   </div>
 
   <div id="tap-start">
@@ -118,36 +118,47 @@
 
   <script>
     // Prime videos inside a real user gesture so iOS Safari decodes them.
+    // Strategy: play all 7 at once and let them keep playing (offscreen pool).
+    // Don't pause — iOS has issues resuming WebGL VideoTexture after pause.
     (function () {
       const overlay = document.getElementById('tap-start');
       const videos = Array.from(document.querySelectorAll('#video-pool video'));
+
+      window.flowerVideoStats = {
+        primed: 0,
+        failed: 0,
+        total: videos.length,
+        errors: {},
+      };
 
       const prime = () => {
         overlay.removeEventListener('click', prime);
         overlay.removeEventListener('touchend', prime);
 
-        let primed = 0;
         videos.forEach((v) => {
           v.muted = true;
           v.playsInline = true;
+          v.loop = true;
+          v.load();
           const attempt = v.play();
           if (attempt && attempt.then) {
             attempt.then(() => {
-              v.pause();
-              v.currentTime = 0;
-              primed++;
+              window.flowerVideoStats.primed++;
               window.dispatchEvent(new CustomEvent('flower-video-primed', {
-                detail: { id: v.id, count: primed, total: videos.length }
+                detail: { id: v.id }
               }));
             }).catch((err) => {
+              window.flowerVideoStats.failed++;
+              window.flowerVideoStats.errors[v.id] = err && err.name;
               console.warn('[prime]', v.id, err && err.message);
             });
+          } else {
+            window.flowerVideoStats.primed++;
           }
         });
 
         overlay.classList.add('hidden');
         setTimeout(() => { overlay.style.display = 'none'; }, 500);
-        window.dispatchEvent(new CustomEvent('flower-videos-primed'));
       };
 
       overlay.addEventListener('click', prime, { once: true });

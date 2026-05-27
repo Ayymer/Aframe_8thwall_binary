@@ -1,6 +1,7 @@
 /**
  * painting-resurrection — video overlays on the Ruysch image target.
- * iOS-safe: waits for tap-to-prime before binding video textures.
+ * iOS strategy: videos start playing on tap and never stop. Visibility
+ * is controlled by shader opacity only — pausing breaks VideoTexture on iOS.
  */
 (function () {
   const IMG_W = 809;
@@ -8,10 +9,7 @@
   const TARGET_NAME = 'painting';
   const THREE = AFRAME.THREE;
 
-  const hudState = {
-    status: 'Loading…',
-    detail: 'Initializing',
-  };
+  const hudState = { status: 'Loading…', detail: 'Initializing' };
 
   function setHud(status, detail) {
     if (status != null) hudState.status = status;
@@ -33,46 +31,42 @@
     });
 
   // ---------- math helpers ----------
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const easeInOutCubic = (t) =>
+    t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-  function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
-  function easeInOutCubic(t) {
-    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-  }
-  function pxToWorld(px, py, config) {
+  function pxToWorld(px, py, cfg) {
     return {
-      x: ((px - IMG_W / 2) / IMG_W) * config.targetWidth,
-      y: ((IMG_H / 2 - py) / IMG_H) * config.targetHeight,
+      x: ((px - IMG_W / 2) / IMG_W) * cfg.targetWidth,
+      y: ((IMG_H / 2 - py) / IMG_H) * cfg.targetHeight,
     };
   }
-  function resolveLayerGeometry(layer, config) {
-    const figmaSize = config.figmaPaintingSize || [IMG_W, IMG_H];
-    const scaleX = IMG_W / figmaSize[0];
-    const scaleY = IMG_H / figmaSize[1];
-    const centerPx = layer.centerPx || [
-      layer.figmaCenter[0] * scaleX,
-      layer.figmaCenter[1] * scaleY,
-    ];
+
+  function resolveLayerGeometry(layer, cfg) {
+    const figmaSize = cfg.figmaPaintingSize || [IMG_W, IMG_H];
+    const sx = IMG_W / figmaSize[0];
+    const sy = IMG_H / figmaSize[1];
+    const centerPx = layer.centerPx || [layer.figmaCenter[0] * sx, layer.figmaCenter[1] * sy];
     let sizePx = layer.sizePx;
     if (!sizePx && layer.figmaWidth != null && layer.videoSize) {
-      const widthPx = layer.figmaWidth * scaleX;
-      const aspect = layer.videoSize[1] / layer.videoSize[0];
-      sizePx = [widthPx, widthPx * aspect];
+      const w = layer.figmaWidth * sx;
+      sizePx = [w, w * (layer.videoSize[1] / layer.videoSize[0])];
     }
     if (!sizePx && layer.videoSize) {
-      sizePx = [layer.videoSize[0] * scaleX, layer.videoSize[1] * scaleY];
+      sizePx = [layer.videoSize[0] * sx, layer.videoSize[1] * sy];
     }
     return { centerPx, sizePx };
   }
+
   function getPhase(loopMs, phases) {
     let t = loopMs;
     if (t < phases.stillMs) return { name: 'still', elapsed: t };
     t -= phases.stillMs;
-    if (t < phases.animateMs) {
-      return { name: 'animate', elapsed: t, localT: t / phases.animateMs };
-    }
+    if (t < phases.animateMs) return { name: 'animate', elapsed: t, localT: t / phases.animateMs };
     t -= phases.animateMs;
     return { name: 'endStill', elapsed: t, localT: t / phases.endStillMs };
   }
+
   function phaseOpacity(phase, phases) {
     if (phase.name === 'still') return 0;
     if (phase.name === 'animate') {
@@ -82,7 +76,6 @@
   }
 
   // ---------- chroma shader ----------
-
   function createChromaMaterial(texture, chroma, opacity) {
     return new THREE.ShaderMaterial({
       uniforms: {
@@ -122,7 +115,6 @@
   }
 
   // ---------- per-layer video binding ----------
-
   AFRAME.registerComponent('flower-video', {
     schema: {
       videoId: { type: 'string' },
@@ -136,46 +128,30 @@
       this.texture = null;
       this.material = null;
       this.video = document.getElementById(this.data.videoId);
-      this.primed = false;
+      this.bound = false;
+      this.errorMsg = null;
       this.tryBind = this.tryBind.bind(this);
-      this.onPrimed = this.onPrimed.bind(this);
 
-      if (!this.video) return;
+      if (!this.video) {
+        this.errorMsg = 'no element';
+        return;
+      }
 
-      this.video.muted = true;
-      this.video.loop = true;
-      this.video.playsInline = true;
-      this.video.crossOrigin = 'anonymous';
-      this.video.preload = 'auto';
-      this.video.setAttribute('playsinline', '');
-      this.video.setAttribute('webkit-playsinline', '');
-
+      this.video.addEventListener('loadedmetadata', this.tryBind);
       this.video.addEventListener('loadeddata', this.tryBind);
       this.video.addEventListener('canplay', this.tryBind);
+      this.video.addEventListener('playing', this.tryBind);
       this.video.addEventListener('error', () => {
-        console.error('[flower-video] error', this.data.videoId, this.video.error);
+        const e = this.video.error;
+        this.errorMsg = e ? `code ${e.code}` : 'error';
       });
-
-      // Wait for the tap-to-start gesture to prime decoding.
-      window.addEventListener('flower-video-primed', this.onPrimed);
-      window.addEventListener('flower-videos-primed', () => {
-        this.primed = true;
-        this.tryBind();
-      });
-
-      this.video.load();
-    },
-
-    onPrimed(e) {
-      if (e.detail && e.detail.id === this.data.videoId) {
-        this.primed = true;
-        this.tryBind();
-      }
     },
 
     tryBind() {
-      if (this.material || !this.video) return;
-      if (this.video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      if (this.bound || !this.video) return;
+
+      // Need both dimensions and a frame ready
+      if (this.video.videoWidth === 0 || this.video.videoHeight === 0) return;
 
       const mesh = this.el.getObject3D('mesh');
       if (!mesh) {
@@ -187,9 +163,11 @@
       this.texture.minFilter = THREE.LinearFilter;
       this.texture.magFilter = THREE.LinearFilter;
       this.texture.format = THREE.RGBAFormat;
+      this.texture.generateMipmaps = false;
 
       this.material = createChromaMaterial(this.texture, this.data, this.data.opacity);
       mesh.material = this.material;
+      this.bound = true;
       this.applyOpacity(this.data.opacity);
     },
 
@@ -204,20 +182,11 @@
     },
 
     play() {
-      if (!this.video) return null;
-      const attempt = this.video.play();
-      if (attempt && attempt.catch) {
-        attempt.catch((err) => {
-          console.warn('[flower-video] play()', this.data.videoId, err && err.message);
-        });
-      }
-      return attempt;
-    },
-
-    pause() {
       if (!this.video) return;
-      this.video.pause();
-      this.video.currentTime = 0;
+      if (this.video.paused) {
+        const a = this.video.play();
+        if (a && a.catch) a.catch(() => {});
+      }
     },
 
     tick() {
@@ -227,54 +196,42 @@
     },
 
     remove() {
-      window.removeEventListener('flower-video-primed', this.onPrimed);
       if (this.video) {
+        this.video.removeEventListener('loadedmetadata', this.tryBind);
         this.video.removeEventListener('loadeddata', this.tryBind);
         this.video.removeEventListener('canplay', this.tryBind);
+        this.video.removeEventListener('playing', this.tryBind);
       }
       if (this.texture) this.texture.dispose();
       if (this.material) this.material.dispose();
     },
   });
 
-  // ---------- HUD on scene ----------
-
+  // ---------- HUD ----------
   AFRAME.registerComponent('scan-hud', {
     init() {
       configPromise
         .then(() => setHud('Tap to begin', 'Then point camera at the printed painting'))
         .catch(() => {});
 
-      this.bound = 0;
-      this.playing = 0;
       this.targetFound = false;
-
-      window.addEventListener('flower-video-primed', (e) => {
-        const { count, total } = e.detail || {};
-        setHud('Look for the painting', `Videos primed: ${count}/${total}`);
-      });
 
       this.el.sceneEl.addEventListener('xrimagefound', (e) => {
         if (e.detail.name !== TARGET_NAME) return;
         this.targetFound = true;
-        setHud('Painting recognized', 'Playing animation');
         this.el.sceneEl.emit('painting-target-found');
       });
       this.el.sceneEl.addEventListener('xrimagelost', (e) => {
         if (e.detail.name !== TARGET_NAME) return;
         this.targetFound = false;
-        setHud('Lost target', 'Re-aim at the painting');
         this.el.sceneEl.emit('painting-target-lost');
       });
     },
   });
 
   // ---------- orchestration ----------
-
   AFRAME.registerComponent('painting-resurrection', {
-    schema: {
-      config: { type: 'string', default: 'assets/meta/video-layers.json' },
-    },
+    schema: { config: { type: 'string', default: 'assets/meta/video-layers.json' } },
 
     init() {
       this.clock = 0;
@@ -282,21 +239,17 @@
       this.layers = [];
       this.lastPhase = null;
       this.targetFound = false;
-      this.primed = false;
+      this.hudCounter = 0;
 
-      this.onPrimed = () => { this.primed = true; this.syncPlayback(); };
       this.onFound = () => {
         this.targetFound = true;
         this.clock = 0;
         this.lastPhase = null;
-        this.syncPlayback();
+        this.playAll();
       };
       this.onLost = () => {
         this.targetFound = false;
-        this.pauseAll();
       };
-
-      window.addEventListener('flower-videos-primed', this.onPrimed);
       this.el.sceneEl.addEventListener('painting-target-found', this.onFound);
       this.el.sceneEl.addEventListener('painting-target-lost', this.onLost);
 
@@ -328,30 +281,9 @@
           smoothness: chroma.smoothness != null ? chroma.smoothness : 0.14,
           opacity: 0,
         });
-
         this.el.appendChild(plane);
         this.layers.push({ el: plane });
       });
-    },
-
-    getCurrentPhase() {
-      return getPhase(this.clock, this.config.phases);
-    },
-
-    getCurrentOpacity() {
-      if (!this.config || !this.targetFound) return 0;
-      return phaseOpacity(this.getCurrentPhase(), this.config.phases);
-    },
-
-    shouldPlay() {
-      if (!this.targetFound || !this.config) return false;
-      const phase = this.getCurrentPhase();
-      return phase.name === 'animate' || phase.name === 'endStill';
-    },
-
-    syncPlayback() {
-      if (this.shouldPlay()) this.playAll();
-      else this.pauseAll();
     },
 
     playAll() {
@@ -361,45 +293,61 @@
       });
     },
 
-    pauseAll() {
-      this.layers.forEach(({ el }) => {
-        const c = el.components['flower-video'];
-        if (c) c.pause();
-      });
+    getOpacity() {
+      if (!this.config || !this.targetFound) return 0;
+      return phaseOpacity(getPhase(this.clock, this.config.phases), this.config.phases);
     },
 
     tick(_time, delta) {
       if (!this.config || !this.layers.length) return;
-      if (!this.targetFound) return;
 
-      this.clock = (this.clock + delta) % this.config.loopDurationMs;
-      const phase = this.getCurrentPhase();
-      const opacity = this.getCurrentOpacity();
-
-      if (phase.name !== this.lastPhase) {
-        this.syncPlayback();
-        this.lastPhase = phase.name;
+      if (this.targetFound) {
+        this.clock = (this.clock + delta) % this.config.loopDurationMs;
       }
+      const phase = this.targetFound ? getPhase(this.clock, this.config.phases) : null;
+      const opacity = this.getOpacity();
 
-      let ready = 0;
+      let bound = 0;
       let playing = 0;
+      let withDims = 0;
+      let withErr = 0;
+      let readyState = 0;
+
       this.layers.forEach(({ el }) => {
         const c = el.components['flower-video'];
         if (!c) return;
         c.setOpacity(opacity);
-        if (c.material) ready++;
-        if (c.video && !c.video.paused) playing++;
-        if (opacity > 0.001 && c.video && c.video.paused) c.play();
+        if (c.bound) bound++;
+        if (c.errorMsg) withErr++;
+        if (c.video) {
+          if (c.video.videoWidth > 0) withDims++;
+          if (!c.video.paused) playing++;
+          readyState = Math.max(readyState, c.video.readyState);
+        }
+        if (this.targetFound && opacity > 0.001 && c.video && c.video.paused) c.play();
       });
 
-      // Surface state in HUD while tracking
-      if (this.targetFound) {
-        setHud(null, `Phase: ${phase.name} · ready: ${ready}/${this.layers.length} · playing: ${playing}`);
-      }
+      // Throttle HUD updates to ~3x/sec
+      this.hudCounter += delta;
+      if (this.hudCounter < 300) return;
+      this.hudCounter = 0;
+
+      const stats = window.flowerVideoStats || {};
+      const status = this.targetFound
+        ? `Painting found · ${phase.name}`
+        : 'Looking for painting';
+      const detail =
+        `tap-primed: ${stats.primed || 0}/${stats.total || 7}` +
+        ` · failed: ${stats.failed || 0}` +
+        ` · dims: ${withDims}/${this.layers.length}` +
+        ` · bound: ${bound}/${this.layers.length}` +
+        ` · playing: ${playing}/${this.layers.length}` +
+        ` · rs: ${readyState}` +
+        (withErr ? ` · err: ${withErr}` : '');
+      setHud(status, detail);
     },
 
     remove() {
-      window.removeEventListener('flower-videos-primed', this.onPrimed);
       this.el.sceneEl.removeEventListener('painting-target-found', this.onFound);
       this.el.sceneEl.removeEventListener('painting-target-lost', this.onLost);
     },
