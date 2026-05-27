@@ -41,6 +41,8 @@
       "videoId": "video-flower-1",
       "src": "assets/video/flower-1.mp4",
       "srcWebm": "assets/video/flower-1.webm",
+      "srcReverse": "assets/video/flower-1-reverse.mp4",
+      "srcWebmReverse": "assets/video/flower-1-reverse.webm",
       "figmaFrame": [969.47, 819.88, 213, 284],
       "videoSize": [834, 1112],
       "zOrder": 2
@@ -51,6 +53,8 @@
       "videoId": "video-flower-2",
       "src": "assets/video/flower-2.mp4",
       "srcWebm": "assets/video/flower-2.webm",
+      "srcReverse": "assets/video/flower-2-reverse.mp4",
+      "srcWebmReverse": "assets/video/flower-2-reverse.webm",
       "figmaFrame": [800.5, 1493.3, 395.022, 526.697],
       "videoSize": [834, 1112],
       "zOrder": 4
@@ -61,6 +65,8 @@
       "videoId": "video-flower-3",
       "src": "assets/video/flower-3.mp4",
       "srcWebm": "assets/video/flower-3.webm",
+      "srcReverse": "assets/video/flower-3-reverse.mp4",
+      "srcWebmReverse": "assets/video/flower-3-reverse.webm",
       "figmaFrame": [601.25, 788.58, 221.423, 221.423],
       "videoSize": [960, 960],
       "zOrder": 3
@@ -71,6 +77,8 @@
       "videoId": "video-flower-4",
       "src": "assets/video/flower-4.mp4",
       "srcWebm": "assets/video/flower-4.webm",
+      "srcReverse": "assets/video/flower-4-reverse.mp4",
+      "srcWebmReverse": "assets/video/flower-4-reverse.webm",
       "figmaFrame": [441.69, 975.82, 270.277, 270.277],
       "videoSize": [960, 960],
       "zOrder": 1
@@ -81,6 +89,8 @@
       "videoId": "video-flower-5",
       "src": "assets/video/flower-5.mp4",
       "srcWebm": "assets/video/flower-5.webm",
+      "srcReverse": "assets/video/flower-5-reverse.mp4",
+      "srcWebmReverse": "assets/video/flower-5-reverse.webm",
       "figmaFrame": [662.79, 220.15, 396.988, 396.988],
       "videoSize": [960, 960],
       "zOrder": 5,
@@ -101,6 +111,8 @@
       "videoId": "video-flower-6",
       "src": "assets/video/flower-6.mp4",
       "srcWebm": "assets/video/flower-6.webm",
+      "srcReverse": "assets/video/flower-6-reverse.mp4",
+      "srcWebmReverse": "assets/video/flower-6-reverse.webm",
       "figmaFrame": [476.71, 1497.57, 249.079, 249.079],
       "videoSize": [960, 960],
       "zOrder": 0
@@ -111,6 +123,8 @@
       "videoId": "video-flower-7",
       "src": "assets/video/flower-7.mp4",
       "srcWebm": "assets/video/flower-7.webm",
+      "srcReverse": "assets/video/flower-7-reverse.mp4",
+      "srcWebmReverse": "assets/video/flower-7-reverse.webm",
       "figmaFrame": [468.44, 47.76, 315.999, 315.999],
       "videoSize": [960, 960],
       "zOrder": 6

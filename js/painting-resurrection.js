@@ -110,11 +110,16 @@
       this.layerByVideoId.set(layer.videoId, layer);
     },
 
-    createElement(layer) {
-      if (this.byId.has(layer.videoId)) return this.byId.get(layer.videoId);
+    reverseId(forwardId) {
+      return forwardId + '-reverse';
+    },
+
+    createElement(layer, reverse) {
+      const videoId = reverse ? this.reverseId(layer.videoId) : layer.videoId;
+      if (this.byId.has(videoId)) return this.byId.get(videoId);
 
       const video = document.createElement('video');
-      video.id = layer.videoId;
+      video.id = videoId;
       video.loop = false;
       video.muted = true;
       video.playsInline = true;
@@ -122,21 +127,42 @@
       video.setAttribute('webkit-playsinline', '');
       video.preload = 'none';
 
-      if (layer.srcWebm) {
+      const srcWebm = reverse ? layer.srcWebmReverse : layer.srcWebm;
+      const src = reverse ? layer.srcReverse : layer.src;
+
+      if (srcWebm) {
         const webm = document.createElement('source');
-        webm.src = layer.srcWebm;
+        webm.src = srcWebm;
         webm.type = 'video/webm';
         video.appendChild(webm);
       }
-      if (layer.src) {
+      if (src) {
         const mp4 = document.createElement('source');
-        mp4.src = layer.src;
+        mp4.src = src;
         mp4.type = 'video/mp4';
         video.appendChild(mp4);
       }
 
       this.poolEl.appendChild(video);
-      this.byId.set(layer.videoId, video);
+      this.byId.set(videoId, video);
+      return video;
+    },
+
+    getReverseVideo(forwardVideoId) {
+      return this.byId.get(this.reverseId(forwardVideoId)) || null;
+    },
+
+    async loadVideo(video, videoId) {
+      if (this.loaded.has(videoId)) return video;
+      video.load();
+      await waitForVideoEvent(video, 'loadedmetadata');
+      await waitForVideoEvent(video, 'canplay');
+      this.loaded.add(videoId);
+      if (!videoId.endsWith('-reverse')) {
+        window.dispatchEvent(new CustomEvent('flower-video-ready', {
+          detail: { id: videoId },
+        }));
+      }
       return video;
     },
 
@@ -144,16 +170,11 @@
       const tasks = layerIds.map(async (id) => {
         const layer = layersById.get(id);
         if (!layer) return null;
-        const video = this.createElement(layer);
-        if (this.loaded.has(layer.videoId)) return video;
-        video.load();
-        await waitForVideoEvent(video, 'loadedmetadata');
-        await waitForVideoEvent(video, 'canplay');
-        this.loaded.add(layer.videoId);
-        window.dispatchEvent(new CustomEvent('flower-video-ready', {
-          detail: { id: layer.videoId },
-        }));
-        return video;
+        const forward = this.createElement(layer, false);
+        const reverse = this.createElement(layer, true);
+        await this.loadVideo(forward, layer.videoId);
+        await this.loadVideo(reverse, this.reverseId(layer.videoId));
+        return forward;
       });
       return Promise.all(tasks);
     },
@@ -293,6 +314,9 @@
       this.cycleActive = false;
       this.cycleComplete = false;
       this.playMode = 'idle';
+      this.reverseVideo = null;
+      this.onForwardEnded = () => this.beginWilt();
+      this.onReverseEnded = () => this.finishCycle();
       this.tryBind = this.tryBind.bind(this);
       this.onVideoReady = (e) => {
         if (e.detail.id !== this.data.videoId) return;
@@ -358,28 +382,107 @@
 
     beginCycle() {
       if (!this.video || !this.bound) return;
+      this.clearCycleListeners();
       this.cycleActive = true;
       this.cycleComplete = false;
       this.playMode = 'forward';
+      this.reverseVideo = VideoPool.getReverseVideo(this.data.videoId);
+
+      if (this.texture) {
+        this.texture.image = this.video;
+      }
+
       try {
         this.video.currentTime = 0;
       } catch (err) {
         /* ignore */
       }
+
+      this.video.addEventListener('ended', this.onForwardEnded);
       const attempt = this.video.play();
       if (attempt && attempt.catch) attempt.catch(() => {});
+    },
+
+    beginWilt() {
+      if (!this.cycleActive || !this.reverseVideo) {
+        this.finishCycle();
+        return;
+      }
+
+      this.playMode = 'reverse';
+      if (this.video) {
+        this.video.removeEventListener('ended', this.onForwardEnded);
+        this.video.pause();
+      }
+
+      const reverse = this.reverseVideo;
+      const startReverse = () => {
+        if (!this.cycleActive) return;
+        if (this.texture) {
+          this.texture.image = reverse;
+          this.texture.needsUpdate = true;
+        }
+        try {
+          reverse.currentTime = 0;
+        } catch (err) {
+          /* ignore */
+        }
+        reverse.addEventListener('ended', this.onReverseEnded);
+        const attempt = reverse.play();
+        if (attempt && attempt.catch) attempt.catch(() => {});
+      };
+
+      if (reverse.readyState >= 3) {
+        startReverse();
+      } else {
+        reverse.addEventListener('canplay', startReverse, { once: true });
+        if (reverse.readyState === 0) reverse.load();
+      }
+    },
+
+    finishCycle() {
+      this.playMode = 'idle';
+      this.cycleComplete = true;
+      if (this.reverseVideo) {
+        this.reverseVideo.removeEventListener('ended', this.onReverseEnded);
+        this.reverseVideo.pause();
+      }
+      if (this.texture && this.video) {
+        this.texture.image = this.video;
+      }
+    },
+
+    clearCycleListeners() {
+      if (this.video) {
+        this.video.removeEventListener('ended', this.onForwardEnded);
+      }
+      if (this.reverseVideo) {
+        this.reverseVideo.removeEventListener('ended', this.onReverseEnded);
+      }
     },
 
     stopCycle() {
       this.cycleActive = false;
       this.cycleComplete = false;
       this.playMode = 'idle';
+      this.clearCycleListeners();
+      if (this.reverseVideo) {
+        this.reverseVideo.pause();
+        try {
+          this.reverseVideo.currentTime = 0;
+        } catch (err) {
+          /* ignore */
+        }
+      }
       if (!this.video) return;
       this.video.pause();
       try {
         this.video.currentTime = 0;
       } catch (err) {
         /* ignore */
+      }
+      if (this.texture) {
+        this.texture.image = this.video;
       }
     },
 
@@ -391,33 +494,16 @@
       return this.playMode;
     },
 
-    tick(_time, delta) {
-      if (!this.texture || !this.bound || this.data.opacity < 0.001 || !this.video) return;
-
-      if (this.playMode === 'forward') {
-        if (this.video.duration && this.video.currentTime >= this.video.duration - 0.06) {
-          this.playMode = 'reverse';
-          this.video.pause();
-        } else if (!this.video.paused) {
-          this.texture.needsUpdate = true;
-        }
-      } else if (this.playMode === 'reverse') {
-        const dt = delta / 1000;
-        try {
-          this.video.currentTime = Math.max(0, this.video.currentTime - dt);
-        } catch (err) {
-          /* seek can fail while buffering */
-        }
-        if (this.video.currentTime <= 0.03) {
-          this.playMode = 'idle';
-          this.video.currentTime = 0;
-          this.cycleComplete = true;
-        }
+    tick() {
+      if (!this.texture || !this.bound || this.data.opacity < 0.001) return;
+      const active = this.playMode === 'forward' ? this.video : this.reverseVideo;
+      if (active && !active.paused) {
         this.texture.needsUpdate = true;
       }
     },
 
     remove() {
+      this.clearCycleListeners();
       window.removeEventListener('flower-video-ready', this.onVideoReady);
       if (this.video) {
         this.video.removeEventListener('loadedmetadata', this.tryBind);
@@ -611,10 +697,14 @@
     },
 
     getVideoIdsForLayers(layerIds) {
-      return layerIds
-        .map((id) => this.layersById.get(id))
-        .filter(Boolean)
-        .map((layer) => layer.videoId);
+      const ids = [];
+      layerIds.forEach((id) => {
+        const layer = this.layersById.get(id);
+        if (!layer) return;
+        ids.push(layer.videoId);
+        ids.push(VideoPool.reverseId(layer.videoId));
+      });
+      return ids;
     },
 
     playSeasonSound(seasonIndex, loop) {
