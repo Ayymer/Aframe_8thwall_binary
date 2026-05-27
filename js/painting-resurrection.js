@@ -43,14 +43,38 @@
   }
 
   function resolveLayerGeometry(layer, cfg) {
-    const figmaSize = cfg.figmaPaintingSize || [IMG_W, IMG_H];
-    const sx = IMG_W / figmaSize[0];
-    const sy = IMG_H / figmaSize[1];
-    const centerPx = layer.centerPx || [layer.figmaCenter[0] * sx, layer.figmaCenter[1] * sy];
+    const figmaPainting = cfg.figmaPaintingSize || [IMG_W, IMG_H];
+    const sx = IMG_W / figmaPainting[0];
+    const sy = IMG_H / figmaPainting[1];
+
+    // Figma exports frames as top-left + size. Convert to center for placement.
+    let figCenter = null;
+    let figWidth = null;
+    let figHeight = null;
+    if (layer.figmaFrame) {
+      const [fx, fy, fw, fh] = layer.figmaFrame;
+      figCenter = [fx + fw / 2, fy + fh / 2];
+      figWidth = fw;
+      figHeight = fh;
+    } else if (layer.figmaCenter) {
+      // Legacy fields, kept for backwards compatibility.
+      figCenter = layer.figmaCenter;
+      figWidth = layer.figmaWidth;
+    }
+
+    const centerPx = layer.centerPx ||
+      (figCenter ? [figCenter[0] * sx, figCenter[1] * sy] : [IMG_W / 2, IMG_H / 2]);
+
     let sizePx = layer.sizePx;
-    if (!sizePx && layer.figmaWidth != null && layer.videoSize) {
-      const w = layer.figmaWidth * sx;
+    if (!sizePx && figWidth != null && layer.videoSize) {
+      // Lock to video's native aspect ratio anchored on Figma width — the
+      // Figma frames in our file already match aspect, but this protects us
+      // if someone resizes a frame asymmetrically by accident.
+      const w = figWidth * sx;
       sizePx = [w, w * (layer.videoSize[1] / layer.videoSize[0])];
+    }
+    if (!sizePx && figWidth != null && figHeight != null) {
+      sizePx = [figWidth * sx, figHeight * sy];
     }
     if (!sizePx && layer.videoSize) {
       sizePx = [layer.videoSize[0] * sx, layer.videoSize[1] * sy];
