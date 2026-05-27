@@ -120,6 +120,7 @@
       this.material = null;
       this.video = this.data.video;
       this.bindVideo = this.bindVideo.bind(this);
+      this.onVideoEvent = this.onVideoEvent.bind(this);
 
       if (!this.video) {
         console.error('[chromakey-video] Missing video element', this.el);
@@ -131,17 +132,36 @@
       this.video.playsInline = true;
       this.video.setAttribute('playsinline', '');
       this.video.setAttribute('webkit-playsinline', '');
-      if (!this.video.getAttribute('crossorigin')) {
-        this.video.crossOrigin = 'anonymous';
-      }
+      this.video.crossOrigin = 'anonymous';
+      this.video.preload = 'auto';
 
-      // Prime decode when a frame is ready — do not block scene load.
-      this.video.addEventListener('loadeddata', this.bindVideo, { once: true });
-      this.video.load();
+      this.video.addEventListener('loadeddata', this.onVideoEvent);
+      this.video.addEventListener('canplay', this.onVideoEvent);
+      this.video.addEventListener('error', () => {
+        console.error('[chromakey-video] Video error', this.video.src, this.video.error);
+      });
+
+      if (this.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        this.bindVideo();
+      } else {
+        this.video.load();
+      }
+    },
+
+    onVideoEvent() {
+      if (this.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        this.bindVideo();
+      }
     },
 
     bindVideo() {
       if (this.material) return;
+
+      const mesh = this.el.getObject3D('mesh');
+      if (!mesh) {
+        this.el.addEventListener('loaded', this.bindVideo, { once: true });
+        return;
+      }
 
       this.texture = new THREE.VideoTexture(this.video);
       this.texture.minFilter = THREE.LinearFilter;
@@ -151,35 +171,47 @@
       }
 
       this.material = createChromaMaterial(this.texture, this.data, this.data.opacity);
-      this.el.getObject3D('mesh').material = this.material;
-      this.el.object3D.visible = this.data.opacity > 0.001;
+      mesh.material = this.material;
+      this.applyVisibility(this.data.opacity);
+    },
 
-      // Prime decode so the first visible frame is not blank.
-      const prime = this.video.play();
-      if (prime && prime.then) {
-        prime
-          .then(() => {
-            if (this.data.opacity <= 0.001) {
-              this.video.pause();
-              this.video.currentTime = 0;
-            }
-          })
-          .catch(() => {});
+    applyVisibility(opacity) {
+      const show = opacity > 0.001 && !!this.material;
+      this.el.object3D.visible = show;
+      if (this.material) {
+        this.material.uniforms.opacity.value = opacity;
       }
     },
 
-    update(oldData) {
-      if (!this.material) return;
-      this.material.uniforms.opacity.value = this.data.opacity;
-      this.material.uniforms.threshold.value = this.data.threshold;
-      this.material.uniforms.smoothness.value = this.data.smoothness;
-      this.material.uniforms.keyColor.value.set(this.data.keyColor);
-      this.el.object3D.visible = this.data.opacity > 0.001;
+    setOpacity(opacity) {
+      this.data.opacity = opacity;
+      this.applyVisibility(opacity);
+    },
+
+    playVideo() {
+      if (!this.video) return;
+      const attempt = this.video.play();
+      if (attempt && attempt.catch) {
+        attempt.catch((err) => {
+          console.warn('[chromakey-video] play failed', this.video.id, err);
+        });
+      }
+    },
+
+    pauseVideo() {
+      if (!this.video) return;
+      this.video.pause();
+      this.video.currentTime = 0;
+    },
+
+    update() {
+      this.applyVisibility(this.data.opacity);
     },
 
     remove() {
       if (this.video) {
-        this.video.removeEventListener('loadeddata', this.bindVideo);
+        this.video.removeEventListener('loadeddata', this.onVideoEvent);
+        this.video.removeEventListener('canplay', this.onVideoEvent);
       }
       if (this.texture) this.texture.dispose();
       if (this.material) this.material.dispose();
@@ -206,8 +238,8 @@
           })
           .then((cfg) => {
             this.config = cfg;
-            this.createVideoElements(cfg);
-            this.createVideoLayers(cfg);
+            this.ensureVideoElements(cfg);
+            requestAnimationFrame(() => this.createVideoLayers(cfg));
           })
           .catch((err) => console.error('[painting-resurrection]', err));
       };
@@ -219,30 +251,20 @@
       }
     },
 
-    createVideoElements(cfg) {
-      let pool = document.getElementById('video-pool');
-      if (!pool) {
-        pool = document.createElement('div');
-        pool.id = 'video-pool';
-        pool.setAttribute('aria-hidden', 'true');
-        pool.style.cssText = 'position:fixed;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none';
-        document.body.appendChild(pool);
-      }
-
+    ensureVideoElements(cfg) {
       cfg.layers.forEach((layer) => {
-        if (document.getElementById(layer.videoId)) return;
-
-        const video = document.createElement('video');
-        video.id = layer.videoId;
-        video.src = layer.src;
-        video.crossOrigin = 'anonymous';
+        const video = document.getElementById(layer.videoId);
+        if (!video) {
+          console.error('[painting-resurrection] Missing video in DOM', layer.videoId);
+          return;
+        }
         video.muted = true;
         video.loop = true;
         video.playsInline = true;
-        video.preload = 'metadata';
-        video.setAttribute('playsinline', '');
-        video.setAttribute('webkit-playsinline', '');
-        pool.appendChild(video);
+        video.crossOrigin = 'anonymous';
+        video.preload = 'auto';
+        if (!video.src) video.src = layer.src;
+        video.load();
       });
     },
 
@@ -250,20 +272,24 @@
       const chroma = cfg.chromaKey || {};
 
       cfg.layers.forEach((layer, index) => {
+        const video = document.getElementById(layer.videoId);
+        if (!video) {
+          console.error('[painting-resurrection] Missing video', layer.videoId);
+          return;
+        }
+
         const { centerPx, sizePx } = resolveLayerGeometry(layer, cfg);
         const planeW = (sizePx[0] / IMG_W) * cfg.targetWidth;
         const planeH = (sizePx[1] / IMG_H) * cfg.targetHeight;
         const pos = pxToWorld(centerPx[0], centerPx[1], cfg);
-        const z = 0.001 + (layer.zOrder || index) * 0.0005;
-        const videoSelector = `#${layer.videoId}`;
+        const z = 0.002 + (layer.zOrder || index) * 0.0005;
 
         const plane = document.createElement('a-plane');
         plane.setAttribute('width', planeW);
         plane.setAttribute('height', planeH);
         plane.setAttribute('position', `${pos.x} ${pos.y} ${z}`);
-        plane.setAttribute('visible', false);
         plane.setAttribute('chromakey-video', {
-          video: videoSelector,
+          video: `#${layer.videoId}`,
           keyColor: chroma.color || '#000000',
           threshold: chroma.threshold != null ? chroma.threshold : 0.06,
           smoothness: chroma.smoothness != null ? chroma.smoothness : 0.14,
@@ -272,7 +298,6 @@
 
         this.el.appendChild(plane);
 
-        const video = document.querySelector(videoSelector);
         this.layerStates.push({
           el: plane,
           video,
@@ -281,53 +306,69 @@
       });
     },
 
-    setVideosPlaying(shouldPlay) {
-      this.layerStates.forEach(({ video }) => {
-        if (!video) return;
-        if (shouldPlay) {
-          video.currentTime = 0;
-          const playAttempt = video.play();
-          if (playAttempt && playAttempt.catch) {
-            playAttempt.catch((err) => {
-              console.warn('[painting-resurrection] video.play()', err);
-            });
-          }
-        } else {
-          video.pause();
-          video.currentTime = 0;
-        }
+    getCurrentPhase() {
+      return getPhase(this.clock, this.config.phases);
+    },
+
+    getCurrentOpacity() {
+      return phaseOpacity(this.getCurrentPhase(), this.config.phases);
+    },
+
+    shouldPlayVideos() {
+      const phase = this.getCurrentPhase();
+      return phase.name === 'animate' || phase.name === 'endStill';
+    },
+
+    syncPlayback() {
+      if (this.shouldPlayVideos()) {
+        this.playAllVideos();
+      } else {
+        this.pauseAllVideos();
+      }
+    },
+
+    playAllVideos() {
+      this.layerStates.forEach(({ el }) => {
+        const component = el.components['chromakey-video'];
+        if (component) component.playVideo();
+      });
+    },
+
+    pauseAllVideos() {
+      this.layerStates.forEach(({ el }) => {
+        const component = el.components['chromakey-video'];
+        if (component) component.pauseVideo();
       });
     },
 
     updateLayerOpacity(state, opacity) {
-      const current = state.el.getAttribute('chromakey-video') || {};
-      state.el.setAttribute('chromakey-video', {
-        video: current.video,
-        keyColor: current.keyColor,
-        threshold: current.threshold,
-        smoothness: current.smoothness,
-        opacity,
-      });
+      const component = state.el.components['chromakey-video'];
+      if (component) {
+        component.setOpacity(opacity);
+      }
     },
 
     tick(_time, delta) {
-      if (!this.config) return;
+      if (!this.config || !this.layerStates.length) return;
 
       this.clock = (this.clock + delta) % this.config.loopDurationMs;
-      const phase = getPhase(this.clock, this.config.phases);
-      const opacity = phaseOpacity(phase, this.config.phases);
+      const phase = this.getCurrentPhase();
+      const opacity = this.getCurrentOpacity();
 
       if (phase.name !== this.lastPhase) {
-        if (phase.name === 'animate') {
-          this.setVideosPlaying(true);
-        } else if (phase.name === 'still' || phase.name === 'endStill') {
-          this.setVideosPlaying(false);
-        }
+        this.syncPlayback();
         this.lastPhase = phase.name;
       }
 
       this.layerStates.forEach((state) => {
         this.updateLayerOpacity(state, opacity);
+        const component = state.el.components['chromakey-video'];
+        if (component && component.texture) {
+          component.texture.needsUpdate = true;
+        }
+        if (opacity > 0.001 && state.video && state.video.paused) {
+          component && component.playVideo();
+        }
       });
     },
   });
