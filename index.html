@@ -11,18 +11,68 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
+      background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
+    #video-pool {
+      position: fixed;
+      left: -1000px;
+      top: -1000px;
+      width: 1px;
+      height: 1px;
+      opacity: 0.01;
+      pointer-events: none;
+    }
+    #tap-start {
+      position: fixed;
+      inset: 0;
+      z-index: 99999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.92);
+      color: #fff;
+      text-align: center;
+      padding: 24px;
+      transition: opacity 0.4s ease;
+    }
+    #tap-start.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    #tap-start .title { font-size: 22px; margin-bottom: 8px; letter-spacing: 0.5px; }
+    #tap-start .sub { opacity: 0.7; margin-bottom: 28px; font-size: 14px; line-height: 1.5; max-width: 280px; }
+    #tap-start .btn {
+      padding: 16px 36px;
+      background: #fff;
+      color: #000;
+      border-radius: 999px;
+      font-weight: 600;
+      font-size: 16px;
+    }
+    #scan-hud {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 9998;
+      color: #fff;
+      font-size: 13px;
+      line-height: 1.4;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 8px 12px;
+      border-radius: 8px;
+      pointer-events: none;
+    }
+    #scan-hud .status { font-weight: 600; }
+    #scan-hud .detail { opacity: 0.75; font-size: 11px; margin-top: 2px; }
   </style>
 
-  <!-- AR Libraries -->
   <script src="https://cdn.8thwall.com/web/aframe/8frame-1.3.0.min.js"></script>
   <script src="https://cdn.8thwall.com/web/xrextras/xrextras.js"></script>
   <script src="js/painting-resurrection.js"></script>
-
-  <!-- 8th Wall Engine -->
   <script async src="engine/xr.js" data-preload-chunks="slam"></script>
 
-  <!-- Image Target Configuration -->
   <script>
     const onxrloaded = () => {
       XR8.XrController.configure({
@@ -31,12 +81,9 @@
           type: 'PLANAR',
           imagePath: 'assets/Targets/painting.png',
           properties: {
-            left: 0,
-            top: 0,
-            width: 809,
-            height: 1024,
-            originalWidth: 809,
-            originalHeight: 1024,
+            left: 0, top: 0,
+            width: 809, height: 1024,
+            originalWidth: 809, originalHeight: 1024,
             isRotated: false
           }
         }]
@@ -46,7 +93,7 @@
   </script>
 </head>
 <body>
-  <div id="video-pool" aria-hidden="true" style="position:fixed;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none">
+  <div id="video-pool" aria-hidden="true">
     <video id="video-flower-1" src="assets/video/flower-1.mp4" crossorigin="anonymous" loop muted playsinline webkit-playsinline preload="auto"></video>
     <video id="video-flower-2" src="assets/video/flower-2.mp4" crossorigin="anonymous" loop muted playsinline webkit-playsinline preload="auto"></video>
     <video id="video-flower-3" src="assets/video/flower-3.mp4" crossorigin="anonymous" loop muted playsinline webkit-playsinline preload="auto"></video>
@@ -55,6 +102,58 @@
     <video id="video-flower-6" src="assets/video/flower-6.mp4" crossorigin="anonymous" loop muted playsinline webkit-playsinline preload="auto"></video>
     <video id="video-flower-7" src="assets/video/flower-7.mp4" crossorigin="anonymous" loop muted playsinline webkit-playsinline preload="auto"></video>
   </div>
+
+  <div id="tap-start">
+    <div>
+      <div class="title">Ruysch Resurrection</div>
+      <div class="sub">Tap to enable the AR experience, then point your camera at the printed painting.</div>
+      <div class="btn">Tap to begin</div>
+    </div>
+  </div>
+
+  <div id="scan-hud">
+    <div class="status">Loading…</div>
+    <div class="detail">Initializing</div>
+  </div>
+
+  <script>
+    // Prime videos inside a real user gesture so iOS Safari decodes them.
+    (function () {
+      const overlay = document.getElementById('tap-start');
+      const videos = Array.from(document.querySelectorAll('#video-pool video'));
+
+      const prime = () => {
+        overlay.removeEventListener('click', prime);
+        overlay.removeEventListener('touchend', prime);
+
+        let primed = 0;
+        videos.forEach((v) => {
+          v.muted = true;
+          v.playsInline = true;
+          const attempt = v.play();
+          if (attempt && attempt.then) {
+            attempt.then(() => {
+              v.pause();
+              v.currentTime = 0;
+              primed++;
+              window.dispatchEvent(new CustomEvent('flower-video-primed', {
+                detail: { id: v.id, count: primed, total: videos.length }
+              }));
+            }).catch((err) => {
+              console.warn('[prime]', v.id, err && err.message);
+            });
+          }
+        });
+
+        overlay.classList.add('hidden');
+        setTimeout(() => { overlay.style.display = 'none'; }, 500);
+        window.dispatchEvent(new CustomEvent('flower-videos-primed'));
+      };
+
+      overlay.addEventListener('click', prime, { once: true });
+      overlay.addEventListener('touchend', prime, { once: true });
+    })();
+  </script>
 
   <a-scene
     scan-hud

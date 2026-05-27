@@ -1,5 +1,6 @@
 /**
  * painting-resurrection — video overlays on the Ruysch image target.
+ * iOS-safe: waits for tap-to-prime before binding video textures.
  */
 (function () {
   const IMG_W = 809;
@@ -7,26 +8,42 @@
   const TARGET_NAME = 'painting';
   const THREE = AFRAME.THREE;
 
-  let configPromise = fetch('assets/meta/video-layers.json').then((res) => {
-    if (!res.ok) throw new Error(`Config load failed: ${res.status}`);
-    return res.json();
-  });
+  const hudState = {
+    status: 'Loading…',
+    detail: 'Initializing',
+  };
 
-  function clamp(v, lo, hi) {
-    return Math.min(hi, Math.max(lo, v));
+  function setHud(status, detail) {
+    if (status != null) hudState.status = status;
+    if (detail != null) hudState.detail = detail;
+    const el = document.getElementById('scan-hud');
+    if (!el) return;
+    el.querySelector('.status').textContent = hudState.status;
+    el.querySelector('.detail').textContent = hudState.detail;
   }
 
+  const configPromise = fetch('assets/meta/video-layers.json')
+    .then((res) => {
+      if (!res.ok) throw new Error(`Config load failed: ${res.status}`);
+      return res.json();
+    })
+    .catch((err) => {
+      setHud('Config error', String(err.message || err));
+      throw err;
+    });
+
+  // ---------- math helpers ----------
+
+  function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
   function easeInOutCubic(t) {
     return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
   }
-
   function pxToWorld(px, py, config) {
     return {
       x: ((px - IMG_W / 2) / IMG_W) * config.targetWidth,
       y: ((IMG_H / 2 - py) / IMG_H) * config.targetHeight,
     };
   }
-
   function resolveLayerGeometry(layer, config) {
     const figmaSize = config.figmaPaintingSize || [IMG_W, IMG_H];
     const scaleX = IMG_W / figmaSize[0];
@@ -35,7 +52,6 @@
       layer.figmaCenter[0] * scaleX,
       layer.figmaCenter[1] * scaleY,
     ];
-
     let sizePx = layer.sizePx;
     if (!sizePx && layer.figmaWidth != null && layer.videoSize) {
       const widthPx = layer.figmaWidth * scaleX;
@@ -45,10 +61,8 @@
     if (!sizePx && layer.videoSize) {
       sizePx = [layer.videoSize[0] * scaleX, layer.videoSize[1] * scaleY];
     }
-
     return { centerPx, sizePx };
   }
-
   function getPhase(loopMs, phases) {
     let t = loopMs;
     if (t < phases.stillMs) return { name: 'still', elapsed: t };
@@ -59,7 +73,6 @@
     t -= phases.animateMs;
     return { name: 'endStill', elapsed: t, localT: t / phases.endStillMs };
   }
-
   function phaseOpacity(phase, phases) {
     if (phase.name === 'still') return 0;
     if (phase.name === 'animate') {
@@ -68,15 +81,15 @@
     return easeInOutCubic(1 - clamp(phase.elapsed / phases.fadeMs, 0, 1));
   }
 
+  // ---------- chroma shader ----------
+
   function createChromaMaterial(texture, chroma, opacity) {
     return new THREE.ShaderMaterial({
       uniforms: {
         map: { value: texture },
         keyColor: { value: new THREE.Color(chroma.color || '#000000') },
         threshold: { value: chroma.threshold != null ? chroma.threshold : 0.06 },
-        smoothness: {
-          value: chroma.smoothness != null ? chroma.smoothness : 0.14,
-        },
+        smoothness: { value: chroma.smoothness != null ? chroma.smoothness : 0.14 },
         opacity: { value: opacity },
       },
       vertexShader: [
@@ -87,6 +100,7 @@
         '}',
       ].join('\n'),
       fragmentShader: [
+        'precision mediump float;',
         'uniform sampler2D map;',
         'uniform vec3 keyColor;',
         'uniform float threshold;',
@@ -107,47 +121,7 @@
     });
   }
 
-  AFRAME.registerComponent('scan-hud', {
-    init() {
-      this.hud = document.createElement('div');
-      this.hud.id = 'scan-hud';
-      this.hud.style.cssText =
-        'position:fixed;top:12px;left:12px;right:12px;z-index:9999;color:#fff;font:14px/1.4 -apple-system,sans-serif;background:rgba(0,0,0,0.65);padding:10px 12px;border-radius:8px;pointer-events:none';
-      document.body.appendChild(this.hud);
-      this.setMessage('Loading…');
-
-      configPromise
-        .then(() => this.setMessage('Scan the printed painting with your camera'))
-        .catch(() => this.setMessage('Config failed to load'));
-
-      this.onFound = (e) => {
-        if (e.detail.name !== TARGET_NAME) return;
-        this.setMessage('Painting recognized — flowers animating');
-        this.el.sceneEl.emit('painting-target-found');
-      };
-
-      this.onLost = (e) => {
-        if (e.detail.name !== TARGET_NAME) return;
-        this.setMessage('Scan the printed painting with your camera');
-        this.el.sceneEl.emit('painting-target-lost');
-      };
-
-      this.el.sceneEl.addEventListener('xrimagefound', this.onFound);
-      this.el.sceneEl.addEventListener('xrimagelost', this.onLost);
-    },
-
-    setMessage(text) {
-      this.hud.textContent = text;
-    },
-
-    remove() {
-      if (this.hud && this.hud.parentNode) {
-        this.hud.parentNode.removeChild(this.hud);
-      }
-      this.el.sceneEl.removeEventListener('xrimagefound', this.onFound);
-      this.el.sceneEl.removeEventListener('xrimagelost', this.onLost);
-    },
-  });
+  // ---------- per-layer video binding ----------
 
   AFRAME.registerComponent('flower-video', {
     schema: {
@@ -162,12 +136,11 @@
       this.texture = null;
       this.material = null;
       this.video = document.getElementById(this.data.videoId);
+      this.primed = false;
       this.tryBind = this.tryBind.bind(this);
+      this.onPrimed = this.onPrimed.bind(this);
 
-      if (!this.video) {
-        console.error('[flower-video] missing video', this.data.videoId);
-        return;
-      }
+      if (!this.video) return;
 
       this.video.muted = true;
       this.video.loop = true;
@@ -183,10 +156,20 @@
         console.error('[flower-video] error', this.data.videoId, this.video.error);
       });
 
-      if (this.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      // Wait for the tap-to-start gesture to prime decoding.
+      window.addEventListener('flower-video-primed', this.onPrimed);
+      window.addEventListener('flower-videos-primed', () => {
+        this.primed = true;
         this.tryBind();
-      } else {
-        this.video.load();
+      });
+
+      this.video.load();
+    },
+
+    onPrimed(e) {
+      if (e.detail && e.detail.id === this.data.videoId) {
+        this.primed = true;
+        this.tryBind();
       }
     },
 
@@ -203,6 +186,7 @@
       this.texture = new THREE.VideoTexture(this.video);
       this.texture.minFilter = THREE.LinearFilter;
       this.texture.magFilter = THREE.LinearFilter;
+      this.texture.format = THREE.RGBAFormat;
 
       this.material = createChromaMaterial(this.texture, this.data, this.data.opacity);
       mesh.material = this.material;
@@ -210,9 +194,7 @@
     },
 
     applyOpacity(opacity) {
-      if (this.material) {
-        this.material.uniforms.opacity.value = opacity;
-      }
+      if (this.material) this.material.uniforms.opacity.value = opacity;
       this.el.object3D.visible = opacity > 0.001 && !!this.material;
     },
 
@@ -222,13 +204,14 @@
     },
 
     play() {
-      if (!this.video) return;
+      if (!this.video) return null;
       const attempt = this.video.play();
       if (attempt && attempt.catch) {
         attempt.catch((err) => {
-          console.warn('[flower-video] play', this.data.videoId, err);
+          console.warn('[flower-video] play()', this.data.videoId, err && err.message);
         });
       }
+      return attempt;
     },
 
     pause() {
@@ -244,6 +227,7 @@
     },
 
     remove() {
+      window.removeEventListener('flower-video-primed', this.onPrimed);
       if (this.video) {
         this.video.removeEventListener('loadeddata', this.tryBind);
         this.video.removeEventListener('canplay', this.tryBind);
@@ -252,6 +236,40 @@
       if (this.material) this.material.dispose();
     },
   });
+
+  // ---------- HUD on scene ----------
+
+  AFRAME.registerComponent('scan-hud', {
+    init() {
+      configPromise
+        .then(() => setHud('Tap to begin', 'Then point camera at the printed painting'))
+        .catch(() => {});
+
+      this.bound = 0;
+      this.playing = 0;
+      this.targetFound = false;
+
+      window.addEventListener('flower-video-primed', (e) => {
+        const { count, total } = e.detail || {};
+        setHud('Look for the painting', `Videos primed: ${count}/${total}`);
+      });
+
+      this.el.sceneEl.addEventListener('xrimagefound', (e) => {
+        if (e.detail.name !== TARGET_NAME) return;
+        this.targetFound = true;
+        setHud('Painting recognized', 'Playing animation');
+        this.el.sceneEl.emit('painting-target-found');
+      });
+      this.el.sceneEl.addEventListener('xrimagelost', (e) => {
+        if (e.detail.name !== TARGET_NAME) return;
+        this.targetFound = false;
+        setHud('Lost target', 'Re-aim at the painting');
+        this.el.sceneEl.emit('painting-target-lost');
+      });
+    },
+  });
+
+  // ---------- orchestration ----------
 
   AFRAME.registerComponent('painting-resurrection', {
     schema: {
@@ -264,20 +282,23 @@
       this.layers = [];
       this.lastPhase = null;
       this.targetFound = false;
+      this.primed = false;
 
-      this.onTargetFound = () => {
+      this.onPrimed = () => { this.primed = true; this.syncPlayback(); };
+      this.onFound = () => {
         this.targetFound = true;
         this.clock = 0;
         this.lastPhase = null;
         this.syncPlayback();
       };
-      this.onTargetLost = () => {
+      this.onLost = () => {
         this.targetFound = false;
         this.pauseAll();
       };
 
-      this.el.sceneEl.addEventListener('painting-target-found', this.onTargetFound);
-      this.el.sceneEl.addEventListener('painting-target-lost', this.onTargetLost);
+      window.addEventListener('flower-videos-primed', this.onPrimed);
+      this.el.sceneEl.addEventListener('painting-target-found', this.onFound);
+      this.el.sceneEl.addEventListener('painting-target-lost', this.onLost);
 
       configPromise
         .then((cfg) => {
@@ -289,7 +310,6 @@
 
     buildLayers(cfg) {
       const chroma = cfg.chromaKey || {};
-
       cfg.layers.forEach((layer, index) => {
         const { centerPx, sizePx } = resolveLayerGeometry(layer, cfg);
         const planeW = (sizePx[0] / IMG_W) * cfg.targetWidth;
@@ -314,14 +334,18 @@
       });
     },
 
-    getOpacity() {
+    getCurrentPhase() {
+      return getPhase(this.clock, this.config.phases);
+    },
+
+    getCurrentOpacity() {
       if (!this.config || !this.targetFound) return 0;
-      return phaseOpacity(getPhase(this.clock, this.config.phases), this.config.phases);
+      return phaseOpacity(this.getCurrentPhase(), this.config.phases);
     },
 
     shouldPlay() {
       if (!this.targetFound || !this.config) return false;
-      const phase = getPhase(this.clock, this.config.phases);
+      const phase = this.getCurrentPhase();
       return phase.name === 'animate' || phase.name === 'endStill';
     },
 
@@ -349,25 +373,35 @@
       if (!this.targetFound) return;
 
       this.clock = (this.clock + delta) % this.config.loopDurationMs;
-      const phase = getPhase(this.clock, this.config.phases);
-      const opacity = this.getOpacity();
+      const phase = this.getCurrentPhase();
+      const opacity = this.getCurrentOpacity();
 
       if (phase.name !== this.lastPhase) {
         this.syncPlayback();
         this.lastPhase = phase.name;
       }
 
+      let ready = 0;
+      let playing = 0;
       this.layers.forEach(({ el }) => {
         const c = el.components['flower-video'];
         if (!c) return;
         c.setOpacity(opacity);
+        if (c.material) ready++;
+        if (c.video && !c.video.paused) playing++;
         if (opacity > 0.001 && c.video && c.video.paused) c.play();
       });
+
+      // Surface state in HUD while tracking
+      if (this.targetFound) {
+        setHud(null, `Phase: ${phase.name} · ready: ${ready}/${this.layers.length} · playing: ${playing}`);
+      }
     },
 
     remove() {
-      this.el.sceneEl.removeEventListener('painting-target-found', this.onTargetFound);
-      this.el.sceneEl.removeEventListener('painting-target-lost', this.onTargetLost);
+      window.removeEventListener('flower-videos-primed', this.onPrimed);
+      this.el.sceneEl.removeEventListener('painting-target-found', this.onFound);
+      this.el.sceneEl.removeEventListener('painting-target-lost', this.onLost);
     },
   });
 })();
