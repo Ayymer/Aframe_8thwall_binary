@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scan to open Painting AR</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 2rem;
+      max-width: 420px;
+      text-align: center;
+    }
+    h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
+    p { color: #8b949e; font-size: 0.95rem; line-height: 1.5; margin-bottom: 1.5rem; }
+    img {
+      background: #fff;
+      border-radius: 8px;
+      padding: 12px;
+      width: 260px;
+      height: 260px;
+    }
+    .url {
+      margin-top: 1.25rem;
+      font-family: monospace;
+      font-size: 0.85rem;
+      color: #58a6ff;
+      word-break: break-all;
+    }
+    ol {
+      text-align: left;
+      color: #8b949e;
+      font-size: 0.9rem;
+      margin-top: 1.5rem;
+      padding-left: 1.25rem;
+      line-height: 1.7;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Painting AR</h1>
+    <p>Scan this QR code with your phone camera. Same Wi‑Fi as this computer required.</p>
+    <img id="qr" alt="QR code" width="260" height="260">
+    <div class="url" id="url"></div>
+    <ol>
+      <li>Allow camera when prompted</li>
+      <li>Accept the security warning (self-signed cert)</li>
+      <li>Point camera at the printed painting</li>
+      <li>A red rotating cube should appear on the image</li>
+    </ol>
+  </div>
+  <script>
+    const url = `${location.protocol}//${location.hostname}:${location.port}/`;
+    document.getElementById('url').textContent = url;
+    document.getElementById('qr').src =
+      `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(url)}`;
+  </script>
+</body>
+</html>
