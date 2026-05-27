@@ -2,13 +2,7 @@
   "targetWidth": 0.809,
   "targetHeight": 1.024,
   "figmaPaintingSize": [1601, 2020],
-  "sequence": {
-    "introStillMs": 1500,
-    "outroStillMs": 2500,
-    "betweenMs": 600,
-    "fadeMs": 900,
-    "audioMs": 4000
-  },
+  "sequence": {},
   "chromaKey": {
     "color": "#000000",
     "threshold": 0.06,
@@ -19,29 +13,25 @@
       "id": "spring",
       "label": "Spring",
       "sound": "assets/audio/spring.mp3",
-      "layers": ["flower-5", "flower-6", "flower-3"],
-      "holdMs": 4000
+      "layers": ["flower-5", "flower-6", "flower-3"]
     },
     {
       "id": "summer",
       "label": "Summer",
       "sound": "assets/audio/summer.mp3",
-      "layers": ["flower-2", "flower-7"],
-      "holdMs": 4000
+      "layers": ["flower-2", "flower-7"]
     },
     {
       "id": "autumn",
       "label": "Autumn",
       "sound": "assets/audio/autumn.mp3",
-      "layers": ["flower-4", "flower-1"],
-      "holdMs": 4000
+      "layers": ["flower-4", "flower-1"]
     },
     {
       "id": "winter",
       "label": "Winter",
       "sound": "assets/audio/winter.mp3",
-      "layers": [],
-      "holdMs": 4000
+      "layers": []
     }
   ],
   "layers": [

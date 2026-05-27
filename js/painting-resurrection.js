@@ -4,7 +4,8 @@
  * Performance: videos are created and decoded only for the active season
  * (typically 2–3 clips), with the next season prefetched in the background.
  *
- * Narrative: intro still → season 1 (sound + flowers) → … → outro still → loop.
+ * Narrative: continuous seasonal loop — video forward+reverse sets the beat,
+ * audio loops along, no pauses between seasons.
  */
 (function () {
   const IMG_W = 809;
@@ -32,10 +33,6 @@
       setHud('Config error', String(err.message || err));
       throw err;
     });
-
-  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-  const easeInOutCubic = (t) =>
-    t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
   function pxToWorld(px, py, cfg) {
     return {
@@ -81,99 +78,6 @@
 
   function resolveChroma(global, layer) {
     return Object.assign({}, global || {}, layer && layer.chromaKey ? layer.chromaKey : {});
-  }
-
-  function buildTimeline(cfg) {
-    const seq = cfg.sequence || {};
-    const intro = seq.introStillMs != null ? seq.introStillMs : 1500;
-    const outro = seq.outroStillMs != null ? seq.outroStillMs : 2500;
-    const between = seq.betweenMs != null ? seq.betweenMs : 600;
-    const fade = seq.fadeMs != null ? seq.fadeMs : 900;
-    const defaultHold = seq.audioMs != null ? seq.audioMs : 4000;
-    const seasons = cfg.seasons || [];
-    const segments = [];
-    let t = 0;
-
-    segments.push({ kind: 'intro', start: t, end: t + intro });
-    t += intro;
-
-    seasons.forEach((season, index) => {
-      const hold = season.holdMs != null ? season.holdMs : defaultHold;
-      segments.push({ kind: 'fadeIn', seasonIndex: index, start: t, end: t + fade });
-      t += fade;
-      segments.push({ kind: 'hold', seasonIndex: index, start: t, end: t + hold });
-      t += hold;
-      segments.push({ kind: 'fadeOut', seasonIndex: index, start: t, end: t + fade });
-      t += fade;
-      if (index < seasons.length - 1) {
-        segments.push({ kind: 'between', start: t, end: t + between });
-        t += between;
-      }
-    });
-
-    segments.push({ kind: 'outro', start: t, end: t + outro });
-    t += outro;
-
-    return { segments, loopDurationMs: t, fadeMs: fade, defaultHold };
-  }
-
-  /** Ping-pong 0→1→0 over the hold window (synced to 4s audio). */
-  function getBlossomPhase(clock, timeline, seasonIndex) {
-    if (seasonIndex < 0) return 0;
-    const loopMs = ((clock % timeline.loopDurationMs) + timeline.loopDurationMs) %
-      timeline.loopDurationMs;
-    const holdSeg = timeline.segments.find(
-      (s) => s.kind === 'hold' && s.seasonIndex === seasonIndex
-    );
-    if (!holdSeg || loopMs < holdSeg.start || loopMs >= holdSeg.end) return 0;
-    const elapsed = loopMs - holdSeg.start;
-    const duration = holdSeg.end - holdSeg.start;
-    const t = elapsed / duration;
-    if (t < 0.5) return t * 2;
-    return 1 - (t - 0.5) * 2;
-  }
-
-  function getTimelineState(clock, timeline) {
-    const loopMs = ((clock % timeline.loopDurationMs) + timeline.loopDurationMs) % timeline.loopDurationMs;
-    const seg = timeline.segments.find((s) => loopMs >= s.start && loopMs < s.end) ||
-      timeline.segments[timeline.segments.length - 1];
-    const elapsed = loopMs - seg.start;
-    const duration = seg.end - seg.start;
-    const fadeMs = timeline.fadeMs;
-
-    if (seg.kind === 'intro' || seg.kind === 'between' || seg.kind === 'outro') {
-      return {
-        kind: seg.kind,
-        seasonIndex: -1,
-        layerOpacity: 0,
-        label: seg.kind === 'intro' ? 'Nature morte' : seg.kind === 'outro' ? 'Returning…' : 'Pause',
-      };
-    }
-
-    if (seg.kind === 'hold') {
-      return {
-        kind: seg.kind,
-        seasonIndex: seg.seasonIndex,
-        layerOpacity: 1,
-        label: null,
-      };
-    }
-
-    if (seg.kind === 'fadeIn') {
-      return {
-        kind: seg.kind,
-        seasonIndex: seg.seasonIndex,
-        layerOpacity: easeInOutCubic(clamp(elapsed / fadeMs, 0, 1)),
-        label: null,
-      };
-    }
-
-    return {
-      kind: seg.kind,
-      seasonIndex: seg.seasonIndex,
-      layerOpacity: easeInOutCubic(1 - clamp(elapsed / fadeMs, 0, 1)),
-      label: null,
-    };
   }
 
   function waitForVideoEvent(video, eventName) {
@@ -386,6 +290,9 @@
       this.bound = false;
       this.errorCode = 0;
       this.errorMsg = null;
+      this.cycleActive = false;
+      this.cycleComplete = false;
+      this.playMode = 'idle';
       this.tryBind = this.tryBind.bind(this);
       this.onVideoReady = (e) => {
         if (e.detail.id !== this.data.videoId) return;
@@ -405,7 +312,6 @@
       }
 
       this.errorMsg = null;
-      this.lastBlossomPhase = -1;
       this.video.addEventListener('loadedmetadata', this.tryBind);
       this.video.addEventListener('loadeddata', this.tryBind);
       this.video.addEventListener('canplay', this.tryBind);
@@ -450,34 +356,63 @@
       this.applyOpacity(opacity);
     },
 
-    /** Scrub video: 0 = nature morte, 1 = full bloom, then back to 0. */
-    setBlossomPhase(phase) {
+    beginCycle() {
       if (!this.video || !this.bound) return;
-      const p = clamp(phase, 0, 1);
-      if (Math.abs(p - this.lastBlossomPhase) < 0.0005) return;
-      this.lastBlossomPhase = p;
-      if (!this.video.paused) this.video.pause();
-      const duration = this.video.duration;
-      if (duration && isFinite(duration)) {
-        const t = p * Math.max(0, duration - 0.04);
-        if (Math.abs(this.video.currentTime - t) > 0.02) {
-          try {
-            this.video.currentTime = t;
-          } catch (err) {
-            /* seek can fail while buffering */
-          }
-        }
+      this.cycleActive = true;
+      this.cycleComplete = false;
+      this.playMode = 'forward';
+      try {
+        this.video.currentTime = 0;
+      } catch (err) {
+        /* ignore */
       }
-      if (this.texture) this.texture.needsUpdate = true;
+      const attempt = this.video.play();
+      if (attempt && attempt.catch) attempt.catch(() => {});
     },
 
-    resetBlossom() {
-      this.lastBlossomPhase = -1;
-      this.setBlossomPhase(0);
+    stopCycle() {
+      this.cycleActive = false;
+      this.cycleComplete = false;
+      this.playMode = 'idle';
+      if (!this.video) return;
+      this.video.pause();
+      try {
+        this.video.currentTime = 0;
+      } catch (err) {
+        /* ignore */
+      }
     },
 
-    tick() {
-      if (this.texture && this.bound && this.data.opacity > 0.001) {
+    isCycleDone() {
+      return this.cycleActive && this.cycleComplete;
+    },
+
+    getPlayMode() {
+      return this.playMode;
+    },
+
+    tick(_time, delta) {
+      if (!this.texture || !this.bound || this.data.opacity < 0.001 || !this.video) return;
+
+      if (this.playMode === 'forward') {
+        if (this.video.duration && this.video.currentTime >= this.video.duration - 0.06) {
+          this.playMode = 'reverse';
+          this.video.pause();
+        } else if (!this.video.paused) {
+          this.texture.needsUpdate = true;
+        }
+      } else if (this.playMode === 'reverse') {
+        const dt = delta / 1000;
+        try {
+          this.video.currentTime = Math.max(0, this.video.currentTime - dt);
+        } catch (err) {
+          /* seek can fail while buffering */
+        }
+        if (this.video.currentTime <= 0.03) {
+          this.playMode = 'idle';
+          this.video.currentTime = 0;
+          this.cycleComplete = true;
+        }
         this.texture.needsUpdate = true;
       }
     },
@@ -518,19 +453,22 @@
     schema: { config: { type: 'string', default: 'assets/meta/video-layers.json' } },
 
     init() {
-      this.clock = 0;
       this.config = null;
-      this.timeline = null;
       this.layers = [];
       this.layersById = new Map();
       this.targetFound = false;
       this.running = false;
       this.hudCounter = 0;
-      this.activeSeasonIndex = -2;
-      this.lastSeasonKey = null;
-      this.lastAudioKey = null;
+      this.elapsedMs = 0;
+      this.currentSeasonIndex = -1;
+      this.activeLayerIds = [];
+      this.seasonReady = false;
+      this.audioOnlySeason = false;
       this.seasonAudio = new Audio();
       this.seasonAudio.preload = 'auto';
+      this.onAudioEnded = () => {
+        if (this.audioOnlySeason && this.running) this.completeSeason();
+      };
 
       VideoPool.init();
 
@@ -541,14 +479,18 @@
       this.onLost = () => {
         this.targetFound = false;
         this.running = false;
-        this.activeSeasonIndex = -2;
-        this.lastSeasonKey = null;
-        this.lastAudioKey = null;
-        this.seasonAudio.pause();
+        this.currentSeasonIndex = -1;
+        this.activeLayerIds = [];
+        this.seasonReady = false;
+        this.audioOnlySeason = false;
+        this.stopSeasonAudio();
         VideoPool.pauseExcept([]);
         this.layers.forEach(({ el }) => {
           const c = el.components['flower-video'];
-          if (c) c.setOpacity(0);
+          if (c) {
+            c.stopCycle();
+            c.setOpacity(0);
+          }
         });
       };
       this.onGesture = () => {
@@ -562,7 +504,6 @@
       configPromise
         .then((cfg) => {
           this.config = cfg;
-          this.timeline = buildTimeline(cfg);
           cfg.layers.forEach((layer) => {
             this.layersById.set(layer.id, layer);
             VideoPool.registerLayer(layer);
@@ -599,17 +540,74 @@
     startSequence() {
       if (!this.config || this.running) return;
       this.running = true;
-      this.clock = 0;
-      this.activeSeasonIndex = -2;
-      this.lastSeasonKey = null;
-      this.lastAudioKey = null;
-      this.enterSeason(-1, []);
+      this.elapsedMs = 0;
+      this.startSeason(0);
     },
 
-    getActiveLayerIds(seasonIndex) {
-      if (seasonIndex < 0) return [];
+    getLayerComponent(layerId) {
+      const entry = this.layers.find((l) => l.id === layerId);
+      return entry ? entry.el.components['flower-video'] : null;
+    },
+
+    stopSeasonAudio() {
+      this.seasonAudio.onended = null;
+      this.seasonAudio.loop = false;
+      this.seasonAudio.pause();
+    },
+
+    startSeason(seasonIndex) {
+      this.seasonReady = false;
+      this.audioOnlySeason = false;
+      this.activeLayerIds = [];
+      this.currentSeasonIndex = seasonIndex;
+
+      this.layers.forEach(({ el }) => {
+        const c = el.components['flower-video'];
+        if (c) {
+          c.stopCycle();
+          c.setOpacity(0);
+        }
+      });
+
+      VideoPool.pauseExcept([]);
+
       const season = this.config.seasons[seasonIndex];
-      return season && season.layers ? season.layers : [];
+      const layerIds = (season && season.layers) ? season.layers.slice() : [];
+      const nextSeason = this.config.seasons[(seasonIndex + 1) % this.config.seasons.length];
+      if (nextSeason && nextSeason.layers && nextSeason.layers.length) {
+        VideoPool.prefetch(nextSeason.layers, this.layersById);
+      }
+
+      if (!layerIds.length) {
+        this.audioOnlySeason = true;
+        this.seasonReady = true;
+        this.playSeasonSound(seasonIndex, false);
+        this.seasonAudio.onended = this.onAudioEnded;
+        return;
+      }
+
+      this.activeLayerIds = layerIds;
+      const videoIds = this.getVideoIdsForLayers(layerIds);
+      VideoPool.pauseExcept(videoIds);
+      this.playSeasonSound(seasonIndex, true);
+
+      VideoPool.loadLayers(layerIds, this.layersById).then(() => {
+        if (!this.running || this.currentSeasonIndex !== seasonIndex) return;
+        layerIds.forEach((id) => {
+          const c = this.getLayerComponent(id);
+          if (!c) return;
+          c.setOpacity(1);
+          c.beginCycle();
+        });
+        this.seasonReady = true;
+      }).catch((err) => console.warn('[startSeason]', err));
+    },
+
+    completeSeason() {
+      if (!this.running || !this.targetFound) return;
+      this.stopSeasonAudio();
+      const next = (this.currentSeasonIndex + 1) % this.config.seasons.length;
+      this.startSeason(next);
     },
 
     getVideoIdsForLayers(layerIds) {
@@ -619,34 +617,12 @@
         .map((layer) => layer.videoId);
     },
 
-    enterSeason(seasonIndex, layerIds) {
-      const videoIds = this.getVideoIdsForLayers(layerIds);
-
-      VideoPool.pauseExcept(videoIds);
-
-      if (layerIds.length) {
-        VideoPool.playLayers(layerIds, this.layersById).then(() => {
-          this.layers.forEach(({ id, el }) => {
-            if (!layerIds.includes(id)) return;
-            const c = el.components['flower-video'];
-            if (c) c.resetBlossom();
-          });
-        });
-      }
-
-      const nextSeason = this.config.seasons[seasonIndex + 1];
-      if (nextSeason && nextSeason.layers && nextSeason.layers.length) {
-        VideoPool.prefetch(nextSeason.layers, this.layersById);
-      }
-
-      this.activeSeasonIndex = seasonIndex;
-    },
-
-    playSeasonSound(seasonIndex) {
-      this.seasonAudio.pause();
+    playSeasonSound(seasonIndex, loop) {
+      this.stopSeasonAudio();
       if (seasonIndex < 0) return;
       const season = this.config.seasons[seasonIndex];
       if (!season || !season.sound) return;
+      this.seasonAudio.loop = !!loop;
       this.seasonAudio.src = season.sound;
       this.seasonAudio.currentTime = 0;
       const attempt = this.seasonAudio.play();
@@ -656,74 +632,46 @@
     },
 
     tick(_time, delta) {
-      if (!this.config || !this.timeline || !this.layers.length) return;
+      if (!this.config || !this.layers.length) return;
 
       if (this.targetFound && this.running) {
-        this.clock += delta;
-        if (this.clock >= this.timeline.loopDurationMs) {
-          this.clock = 0;
-          this.lastSeasonKey = null;
-          this.lastAudioKey = null;
-        }
+        this.elapsedMs += delta;
       }
 
-      const state = this.running && this.targetFound
-        ? getTimelineState(this.clock, this.timeline)
-        : { kind: 'idle', seasonIndex: -1, layerOpacity: 0, label: 'Nature morte' };
-
-      const activeLayerIds = this.getActiveLayerIds(state.seasonIndex);
-      const shouldAnimate = state.layerOpacity > 0.001 && activeLayerIds.length > 0;
-
-      if (this.running && this.targetFound) {
-        const seasonKey = `${state.seasonIndex}:${activeLayerIds.join(',')}:${state.kind}`;
-        if (seasonKey !== this.lastSeasonKey) {
-          if (state.kind === 'fadeIn' || state.kind === 'hold') {
-            this.enterSeason(state.seasonIndex, activeLayerIds);
-            this.lastSeasonKey = seasonKey;
-          } else if (state.layerOpacity <= 0.001 && state.kind !== 'hold') {
-            this.enterSeason(-1, []);
-            this.lastSeasonKey = seasonKey;
-          }
-        }
-
-        if (state.kind === 'hold' && state.seasonIndex >= 0) {
-          const audioKey = `audio:${state.seasonIndex}`;
-          if (audioKey !== this.lastAudioKey) {
-            this.lastAudioKey = audioKey;
-            this.playSeasonSound(state.seasonIndex);
-          }
-        }
+      if (this.running && this.targetFound && this.seasonReady && !this.audioOnlySeason) {
+        const allDone = this.activeLayerIds.length > 0 &&
+          this.activeLayerIds.every((id) => {
+            const c = this.getLayerComponent(id);
+            return c && c.isCycleDone();
+          });
+        if (allDone) this.completeSeason();
       }
-
-      const blossomPhase = state.kind === 'hold' && state.seasonIndex >= 0
-        ? getBlossomPhase(this.clock, this.timeline, state.seasonIndex)
-        : 0;
-
-      this.layers.forEach(({ id, el }) => {
-        const c = el.components['flower-video'];
-        if (!c) return;
-        const inSeason = activeLayerIds.includes(id) && shouldAnimate;
-        c.setOpacity(inSeason ? state.layerOpacity : 0);
-        if (inSeason) {
-          c.setBlossomPhase(state.kind === 'hold' ? blossomPhase : 0);
-        } else {
-          c.resetBlossom();
-        }
-      });
 
       this.hudCounter += delta;
       if (this.hudCounter < 400) return;
       this.hudCounter = 0;
 
       const pool = VideoPool.stats();
-      const season = state.seasonIndex >= 0 ? this.config.seasons[state.seasonIndex] : null;
+      const season = this.currentSeasonIndex >= 0
+        ? this.config.seasons[this.currentSeasonIndex]
+        : null;
+      let phase = '';
+      if (season && this.activeLayerIds.length) {
+        const modes = this.activeLayerIds.map((id) => {
+          const c = this.getLayerComponent(id);
+          return c ? c.getPlayMode() : 'idle';
+        });
+        if (modes.includes('reverse')) phase = ' · wilt';
+        else if (modes.includes('forward')) phase = ' · bloom';
+      }
+
       const status = this.targetFound
-        ? (season ? `${season.label} · ${state.kind}` : state.label || state.kind)
+        ? (season ? `${season.label}${phase}` : 'Nature morte')
         : (window.flowerGesturePrimed ? 'Looking for painting' : 'Waiting for tap');
 
       const detail =
-        `videos ${pool.loaded}/7 loaded · ${pool.playing} playing` +
-        (this.running ? ` · loop ${Math.round(this.clock / 1000)}s` : '');
+        `videos ${pool.loaded}/7 loaded` +
+        (this.running ? ` · ${Math.round(this.elapsedMs / 1000)}s` : '');
 
       setHud(status, detail);
     },
@@ -732,7 +680,7 @@
       this.el.sceneEl.removeEventListener('painting-target-found', this.onFound);
       this.el.sceneEl.removeEventListener('painting-target-lost', this.onLost);
       window.removeEventListener('flower-gesture-primed', this.onGesture);
-      this.seasonAudio.pause();
+      this.stopSeasonAudio();
     },
   });
 })();
