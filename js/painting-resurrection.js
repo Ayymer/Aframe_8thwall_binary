@@ -99,14 +99,35 @@
     return easeInOutCubic(1 - clamp(phase.elapsed / phases.fadeMs, 0, 1));
   }
 
+  function resolveChroma(global, layer) {
+    return Object.assign({}, global || {}, layer && layer.chromaKey ? layer.chromaKey : {});
+  }
+
   // ---------- chroma shader ----------
   function createChromaMaterial(texture, chroma, opacity) {
+    const hasSecondary = !!chroma.secondaryColor;
+    const hasSpill = chroma.spillThreshold != null;
     return new THREE.ShaderMaterial({
       uniforms: {
         map: { value: texture },
         keyColor: { value: new THREE.Color(chroma.color || '#000000') },
         threshold: { value: chroma.threshold != null ? chroma.threshold : 0.06 },
         smoothness: { value: chroma.smoothness != null ? chroma.smoothness : 0.14 },
+        secondaryColor: {
+          value: new THREE.Color(chroma.secondaryColor || chroma.color || '#000000'),
+        },
+        secondaryThreshold: {
+          value: chroma.secondaryThreshold != null ? chroma.secondaryThreshold : 0.1,
+        },
+        secondarySmoothness: {
+          value: chroma.secondarySmoothness != null ? chroma.secondarySmoothness : 0.16,
+        },
+        useSecondary: { value: hasSecondary ? 1.0 : 0.0 },
+        spillThreshold: { value: chroma.spillThreshold != null ? chroma.spillThreshold : 0.07 },
+        spillSmoothness: {
+          value: chroma.spillSmoothness != null ? chroma.spillSmoothness : 0.1,
+        },
+        useSpill: { value: hasSpill ? 1.0 : 0.0 },
         opacity: { value: opacity },
       },
       vertexShader: [
@@ -122,12 +143,30 @@
         'uniform vec3 keyColor;',
         'uniform float threshold;',
         'uniform float smoothness;',
+        'uniform vec3 secondaryColor;',
+        'uniform float secondaryThreshold;',
+        'uniform float secondarySmoothness;',
+        'uniform float useSecondary;',
+        'uniform float spillThreshold;',
+        'uniform float spillSmoothness;',
+        'uniform float useSpill;',
         'uniform float opacity;',
         'varying vec2 vUV;',
         'void main(void) {',
         '  vec4 tex = texture2D(map, vUV);',
         '  float dist = length(tex.rgb - keyColor);',
         '  float alpha = smoothstep(threshold, threshold + smoothness, dist);',
+        '  if (useSecondary > 0.5) {',
+        '    float dist2 = length(tex.rgb - secondaryColor);',
+        '    float alpha2 = smoothstep(',
+        '      secondaryThreshold, secondaryThreshold + secondarySmoothness, dist2);',
+        '    alpha = min(alpha, alpha2);',
+        '  }',
+        '  if (useSpill > 0.5) {',
+        '    float greenDelta = tex.g - max(tex.r, tex.b);',
+        '    float spill = smoothstep(spillThreshold, spillThreshold + spillSmoothness, greenDelta);',
+        '    alpha = min(alpha, 1.0 - spill);',
+        '  }',
         '  if (alpha < 0.01) discard;',
         '  gl_FragColor = vec4(tex.rgb, alpha * opacity);',
         '}',
@@ -142,15 +181,19 @@
   AFRAME.registerComponent('flower-video', {
     schema: {
       videoId: { type: 'string' },
-      keyColor: { type: 'color', default: '#000000' },
-      threshold: { type: 'number', default: 0.06 },
-      smoothness: { type: 'number', default: 0.14 },
+      chromaJson: { type: 'string', default: '{}' },
       opacity: { type: 'number', default: 0 },
     },
 
     init() {
       this.texture = null;
       this.material = null;
+      this.chroma = {};
+      try {
+        this.chroma = JSON.parse(this.data.chromaJson || '{}');
+      } catch (err) {
+        this.chroma = {};
+      }
       this.video = document.getElementById(this.data.videoId);
       this.bound = false;
       this.errorCode = 0;
@@ -191,7 +234,7 @@
       this.texture.format = THREE.RGBAFormat;
       this.texture.generateMipmaps = false;
 
-      this.material = createChromaMaterial(this.texture, this.data, this.data.opacity);
+      this.material = createChromaMaterial(this.texture, this.chroma, this.data.opacity);
       mesh.material = this.material;
       this.bound = true;
       this.applyOpacity(this.data.opacity);
@@ -288,8 +331,9 @@
     },
 
     buildLayers(cfg) {
-      const chroma = cfg.chromaKey || {};
+      const globalChroma = cfg.chromaKey || {};
       cfg.layers.forEach((layer, index) => {
+        const chroma = resolveChroma(globalChroma, layer);
         const { centerPx, sizePx } = resolveLayerGeometry(layer, cfg);
         const planeW = (sizePx[0] / IMG_W) * cfg.targetWidth;
         const planeH = (sizePx[1] / IMG_H) * cfg.targetHeight;
@@ -302,9 +346,7 @@
         plane.setAttribute('position', `${pos.x} ${pos.y} ${z}`);
         plane.setAttribute('flower-video', {
           videoId: layer.videoId,
-          keyColor: chroma.color || '#000000',
-          threshold: chroma.threshold != null ? chroma.threshold : 0.06,
-          smoothness: chroma.smoothness != null ? chroma.smoothness : 0.14,
+          chromaJson: JSON.stringify(chroma),
           opacity: 0,
         });
         this.el.appendChild(plane);

@@ -58,7 +58,17 @@
       "src": "assets/video/flower-5.mp4",
       "figmaFrame": [662.79, 220.15, 396.988, 396.988],
       "videoSize": [960, 960],
-      "zOrder": 5
+      "zOrder": 5,
+      "chromaKey": {
+        "color": "#000000",
+        "threshold": 0.05,
+        "smoothness": 0.12,
+        "secondaryColor": "#3e6745",
+        "secondaryThreshold": 0.1,
+        "secondarySmoothness": 0.16,
+        "spillThreshold": 0.07,
+        "spillSmoothness": 0.1
+      }
     },
     {
       "id": "flower-6",
