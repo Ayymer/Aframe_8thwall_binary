@@ -129,11 +129,12 @@
       this.material = null;
       this.video = document.getElementById(this.data.videoId);
       this.bound = false;
+      this.errorCode = 0;
       this.errorMsg = null;
       this.tryBind = this.tryBind.bind(this);
 
       if (!this.video) {
-        this.errorMsg = 'no element';
+        this.errorMsg = 'no-element';
         return;
       }
 
@@ -143,6 +144,7 @@
       this.video.addEventListener('playing', this.tryBind);
       this.video.addEventListener('error', () => {
         const e = this.video.error;
+        this.errorCode = e ? e.code : -1;
         this.errorMsg = e ? `code ${e.code}` : 'error';
       });
     },
@@ -211,7 +213,7 @@
   AFRAME.registerComponent('scan-hud', {
     init() {
       configPromise
-        .then(() => setHud('Tap to begin', 'Then point camera at the printed painting'))
+        .then(() => setHud('Ready', 'Tap Begin AR, then point camera at the painting'))
         .catch(() => {});
 
       this.targetFound = false;
@@ -310,15 +312,19 @@
       let bound = 0;
       let playing = 0;
       let withDims = 0;
-      let withErr = 0;
       let readyState = 0;
+      const errBuckets = { 1: 0, 2: 0, 3: 0, 4: 0, '-1': 0 };
+      let totalErr = 0;
 
       this.layers.forEach(({ el }) => {
         const c = el.components['flower-video'];
         if (!c) return;
         c.setOpacity(opacity);
         if (c.bound) bound++;
-        if (c.errorMsg) withErr++;
+        if (c.errorCode) {
+          errBuckets[c.errorCode] = (errBuckets[c.errorCode] || 0) + 1;
+          totalErr++;
+        }
         if (c.video) {
           if (c.video.videoWidth > 0) withDims++;
           if (!c.video.paused) playing++;
@@ -327,7 +333,6 @@
         if (this.targetFound && opacity > 0.001 && c.video && c.video.paused) c.play();
       });
 
-      // Throttle HUD updates to ~3x/sec
       this.hudCounter += delta;
       if (this.hudCounter < 300) return;
       this.hudCounter = 0;
@@ -335,15 +340,22 @@
       const stats = window.flowerVideoStats || {};
       const status = this.targetFound
         ? `Painting found · ${phase.name}`
-        : 'Looking for painting';
+        : (stats.tapped ? 'Looking for painting' : 'Waiting for tap');
+
+      const errLabels = { 1: 'ABORT', 2: 'NET', 3: 'DEC', 4: 'SRC', '-1': 'UNK' };
+      const errSummary = Object.keys(errBuckets)
+        .filter((k) => errBuckets[k] > 0)
+        .map((k) => `${errBuckets[k]}×${errLabels[k]}`)
+        .join(',');
+
       const detail =
-        `tap-primed: ${stats.primed || 0}/${stats.total || 7}` +
-        ` · failed: ${stats.failed || 0}` +
-        ` · dims: ${withDims}/${this.layers.length}` +
-        ` · bound: ${bound}/${this.layers.length}` +
-        ` · playing: ${playing}/${this.layers.length}` +
-        ` · rs: ${readyState}` +
-        (withErr ? ` · err: ${withErr}` : '');
+        `tap ${stats.primed || 0}/${stats.total || 7}` +
+        ` · fail ${stats.failed || 0}` +
+        ` · dims ${withDims}/${this.layers.length}` +
+        ` · bound ${bound}/${this.layers.length}` +
+        ` · play ${playing}/${this.layers.length}` +
+        ` · rs ${readyState}` +
+        (totalErr ? ` · err ${errSummary}` : '');
       setHud(status, detail);
     },
 

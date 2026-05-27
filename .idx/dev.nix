@@ -20,7 +20,8 @@
       enable = true;
       previews = {
         web = {
-          command = ["python3" "-m" "http.server" "$PORT" "--bind" "0.0.0.0"];
+          # Range-aware server (stdlib http.server breaks iOS video playback)
+          command = ["python3" "scripts/serve.py" "$PORT"];
           manager = "web";
         };
       };
