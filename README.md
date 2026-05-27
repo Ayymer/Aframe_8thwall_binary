@@ -2,7 +2,59 @@
 
 Scan a printed image with your phone camera and display AR content anchored on top of it. No app download required — runs in the mobile browser.
 
-This repo is a minimal starter: one HTML file, one image target (Rachel Ruysch still life), and the 8th Wall engine.
+This repo is a WebAR experience built on the Rachel Ruysch still life: flowers **emerge, bloom, wilt**, then fade back to the printed painting (*nature morte*) in a 30-second loop.
+
+## Project structure
+
+```
+├── index.html                      AR scene + image target config
+├── js/painting-resurrection.js     Grow / bloom / wilt animation loop
+├── assets/
+│   ├── Targets/painting.png        Image target to print
+│   ├── layers/*.png                Feathered flower + insect cutouts
+│   └── meta/layers.json            Positions, timing, sway (tweak here)
+├── scripts/extract_layers.py       Re-export layers after mask edits
+└── engine/                         8th Wall XR engine (do not modify)
+```
+
+## Resurrection loop (30 s)
+
+| Phase | Duration | What you see |
+|---|---|---|
+| Still | 3 s | No overlay — only the printed painting |
+| Emerge | 9 s | Flowers grow from stems (bottom → top) |
+| Bloom | 8 s | Gentle sway, warm light pulse, butterfly appears |
+| Wilt | 10 s | Desaturate, droop, falling petals, fade to print |
+
+**Tweak timing without code:** edit [`assets/meta/layers.json`](assets/meta/layers.json) — `phases`, `emergeDelayMs`, `wiltDelayMs`, `swayFreq`, `swayAmp` per layer.
+
+### Re-export layers after mask changes
+
+```bash
+python3 -m venv .venv          # first time only
+.venv/bin/pip install Pillow   # first time only
+.venv/bin/python scripts/extract_layers.py
+```
+
+Edit polygon coordinates in [`scripts/extract_layers.py`](scripts/extract_layers.py), then re-run.
+
+### Align layers on phone
+
+If a cutout sits off the painting:
+
+1. Note the layer `id` (e.g. `rose-pink`).
+2. In `layers.json`, nudge `centerPx` by ±5–15 px (x = left/right, y = up/down in image space).
+3. Reload on phone — no script re-run needed for position-only tweaks.
+
+For bad edges, adjust that layer’s polygon in `extract_layers.py` and re-export.
+
+### Local HTTPS test (camera required)
+
+```bash
+npx --yes http-server -S -C cert.pem -K key.pem -p 8080
+```
+
+Open `https://<your-lan-ip>:8080` on your phone (same Wi‑Fi). Accept the self-signed cert warning once.
 
 ## Workflow: Cursor → GitHub → Firebase Studio
 
@@ -51,26 +103,6 @@ Push from Cursor → wait for Pages to rebuild → test on phone.
 ## Print the image target
 
 Print [`assets/Targets/painting.png`](assets/Targets/painting.png) on paper (at least 10 cm wide, flat and well-lit).
-
-## Project structure
-
-```
-├── index.html                    AR experience (edit this)
-├── engine/                       8th Wall XR engine (do not modify)
-├── assets/Targets/painting.png   Image target to print
-└── README.md
-```
-
-## Add AR content
-
-Edit the `<xrextras-named-image-target name="painting">` section in [`index.html`](index.html). Everything inside is positioned relative to the detected image:
-
-- **Origin (0, 0, 0)** — center of the image
-- **Y axis** — up (away from the surface)
-- **X axis** — left/right
-- **Z axis** — toward/away from you
-
-See the [A-Frame documentation](https://aframe.io/docs/) for shapes, models, video, text, and animations.
 
 ## Troubleshooting
 

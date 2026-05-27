@@ -1,0 +1,284 @@
+{
+  "targetWidth": 0.809,
+  "targetHeight": 1.024,
+  "loopDurationMs": 30000,
+  "phases": {
+    "stillMs": 3000,
+    "emergeMs": 9000,
+    "bloomMs": 8000,
+    "wiltMs": 10000
+  },
+  "layers": [
+    {
+      "id": "iris",
+      "src": "assets/layers/iris.png",
+      "anchorPx": [
+        120,
+        420
+      ],
+      "centerPx": [
+        132.5,
+        335.0
+      ],
+      "sizePx": [
+        219,
+        254
+      ],
+      "cropRect": [
+        23,
+        208,
+        219,
+        254
+      ],
+      "zOrder": 0,
+      "emergeDelayMs": 400,
+      "wiltDelayMs": 0,
+      "swayFreq": 0.25,
+      "swayAmp": 0.8
+    },
+    {
+      "id": "rosebuds",
+      "src": "assets/layers/rosebuds.png",
+      "anchorPx": [
+        155,
+        585
+      ],
+      "centerPx": [
+        165.0,
+        535.0
+      ],
+      "sizePx": [
+        164,
+        154
+      ],
+      "cropRect": [
+        83,
+        458,
+        164,
+        154
+      ],
+      "zOrder": 1,
+      "emergeDelayMs": 800,
+      "wiltDelayMs": 1200,
+      "swayFreq": 0.35,
+      "swayAmp": 1.0
+    },
+    {
+      "id": "rose-white",
+      "src": "assets/layers/rose-white.png",
+      "anchorPx": [
+        210,
+        525
+      ],
+      "centerPx": [
+        232.5,
+        460.0
+      ],
+      "sizePx": [
+        199,
+        184
+      ],
+      "cropRect": [
+        133,
+        368,
+        199,
+        184
+      ],
+      "zOrder": 2,
+      "emergeDelayMs": 1400,
+      "wiltDelayMs": 1800,
+      "swayFreq": 0.3,
+      "swayAmp": 1.1
+    },
+    {
+      "id": "marigold",
+      "src": "assets/layers/marigold.png",
+      "anchorPx": [
+        265,
+        575
+      ],
+      "centerPx": [
+        267.5,
+        522.5
+      ],
+      "sizePx": [
+        169,
+        159
+      ],
+      "cropRect": [
+        183,
+        443,
+        169,
+        159
+      ],
+      "zOrder": 3,
+      "emergeDelayMs": 2000,
+      "wiltDelayMs": 2400,
+      "swayFreq": 0.32,
+      "swayAmp": 1.0
+    },
+    {
+      "id": "rose-pink",
+      "src": "assets/layers/rose-pink.png",
+      "anchorPx": [
+        395,
+        605
+      ],
+      "centerPx": [
+        405.0,
+        515.0
+      ],
+      "sizePx": [
+        234,
+        234
+      ],
+      "cropRect": [
+        288,
+        398,
+        234,
+        234
+      ],
+      "zOrder": 4,
+      "emergeDelayMs": 2600,
+      "wiltDelayMs": 3000,
+      "swayFreq": 0.28,
+      "swayAmp": 1.2
+    },
+    {
+      "id": "hydrangea",
+      "src": "assets/layers/hydrangea.png",
+      "anchorPx": [
+        365,
+        725
+      ],
+      "centerPx": [
+        365.0,
+        655.0
+      ],
+      "sizePx": [
+        254,
+        194
+      ],
+      "cropRect": [
+        238,
+        558,
+        254,
+        194
+      ],
+      "zOrder": 5,
+      "emergeDelayMs": 3200,
+      "wiltDelayMs": 3600,
+      "swayFreq": 0.22,
+      "swayAmp": 0.7
+    },
+    {
+      "id": "poppy",
+      "src": "assets/layers/poppy.png",
+      "anchorPx": [
+        455,
+        175
+      ],
+      "centerPx": [
+        462.5,
+        105.0
+      ],
+      "sizePx": [
+        199,
+        194
+      ],
+      "cropRect": [
+        363,
+        8,
+        199,
+        194
+      ],
+      "zOrder": 6,
+      "emergeDelayMs": 4800,
+      "wiltDelayMs": 0,
+      "swayFreq": 0.2,
+      "swayAmp": 0.9
+    },
+    {
+      "id": "tulip",
+      "src": "assets/layers/tulip.png",
+      "anchorPx": [
+        430,
+        295
+      ],
+      "centerPx": [
+        422.5,
+        210.0
+      ],
+      "sizePx": [
+        189,
+        224
+      ],
+      "cropRect": [
+        328,
+        98,
+        189,
+        224
+      ],
+      "zOrder": 7,
+      "emergeDelayMs": 5400,
+      "wiltDelayMs": 600,
+      "swayFreq": 0.18,
+      "swayAmp": 0.8
+    },
+    {
+      "id": "butterfly",
+      "src": "assets/layers/butterfly.png",
+      "anchorPx": [
+        150,
+        405
+      ],
+      "centerPx": [
+        150.0,
+        385.0
+      ],
+      "sizePx": [
+        114,
+        94
+      ],
+      "cropRect": [
+        93,
+        338,
+        114,
+        94
+      ],
+      "zOrder": 8,
+      "emergeDelayMs": 0,
+      "wiltDelayMs": 0,
+      "swayFreq": 2.5,
+      "swayAmp": 4.0,
+      "bloomOnly": true
+    },
+    {
+      "id": "sunflower",
+      "src": "assets/layers/sunflower.png",
+      "anchorPx": [
+        545,
+        895
+      ],
+      "centerPx": [
+        605.0,
+        785.0
+      ],
+      "sizePx": [
+        274,
+        294
+      ],
+      "cropRect": [
+        468,
+        638,
+        274,
+        294
+      ],
+      "zOrder": 9,
+      "emergeDelayMs": 0,
+      "wiltDelayMs": 8000,
+      "swayFreq": 0.45,
+      "swayAmp": 1.5
+    }
+  ]
+}
