@@ -1,0 +1,75 @@
+{
+  "targetWidth": 0.809,
+  "targetHeight": 1.024,
+  "figmaPaintingSize": [1601, 2020],
+  "loopDurationMs": 30000,
+  "phases": {
+    "stillMs": 3000,
+    "animateMs": 24000,
+    "endStillMs": 3000,
+    "fadeMs": 800
+  },
+  "chromaKey": {
+    "color": "#000000",
+    "threshold": 0.06,
+    "smoothness": 0.14
+  },
+  "layers": [
+    {
+      "id": "flower-1",
+      "label": "Left rose cluster",
+      "src": "assets/video/Subtle seamless AR-ready 1.webm",
+      "figmaCenter": [969.47, 819.88],
+      "videoSize": [834, 1112],
+      "zOrder": 2
+    },
+    {
+      "id": "flower-2",
+      "label": "Sunflower region",
+      "src": "assets/video/Subtle seamless AR-ready 2.webm",
+      "figmaCenter": [800.5, 1493.3],
+      "videoSize": [834, 1112],
+      "zOrder": 4
+    },
+    {
+      "id": "flower-3",
+      "label": "Pink rose",
+      "src": "assets/video/Subtle seamless AR-ready 3.webm",
+      "figmaCenter": [601.25, 788.58],
+      "videoSize": [960, 960],
+      "zOrder": 3
+    },
+    {
+      "id": "flower-4",
+      "label": "White rose",
+      "src": "assets/video/Subtle seamless AR-ready 4.webm",
+      "figmaCenter": [441.69, 975.82],
+      "videoSize": [960, 960],
+      "zOrder": 1
+    },
+    {
+      "id": "flower-5",
+      "label": "Tulip",
+      "src": "assets/video/Subtle seamless AR-ready 5.webm",
+      "figmaCenter": [662.79, 220.15],
+      "videoSize": [960, 960],
+      "zOrder": 5
+    },
+    {
+      "id": "flower-6",
+      "label": "Honeysuckle cluster",
+      "src": "assets/video/Subtle seamless AR-ready 6.webm",
+      "figmaCenter": [476.71, 1497.57],
+      "videoSize": [960, 960],
+      "zOrder": 0
+    },
+    {
+      "id": "flower-7",
+      "label": "Poppy",
+      "src": "assets/video/Subtle seamless AR-ready 7.webm",
+      "figmaCenter": [468.44, 47.76],
+      "videoSize": [960, 960],
+      "zOrder": 6
+    }
+  ]
+}
