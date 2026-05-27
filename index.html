@@ -53,23 +53,12 @@
     xrextras-runtime-error
     xrweb="disableWorldTracking: true">
 
-    <a-assets timeout="120000">
-      <img id="layer-iris" src="assets/layers/iris.png" crossorigin="anonymous">
-      <img id="layer-rosebuds" src="assets/layers/rosebuds.png" crossorigin="anonymous">
-      <img id="layer-rose-white" src="assets/layers/rose-white.png" crossorigin="anonymous">
-      <img id="layer-marigold" src="assets/layers/marigold.png" crossorigin="anonymous">
-      <img id="layer-rose-pink" src="assets/layers/rose-pink.png" crossorigin="anonymous">
-      <img id="layer-hydrangea" src="assets/layers/hydrangea.png" crossorigin="anonymous">
-      <img id="layer-poppy" src="assets/layers/poppy.png" crossorigin="anonymous">
-      <img id="layer-tulip" src="assets/layers/tulip.png" crossorigin="anonymous">
-      <img id="layer-butterfly" src="assets/layers/butterfly.png" crossorigin="anonymous">
-      <img id="layer-sunflower" src="assets/layers/sunflower.png" crossorigin="anonymous">
-    </a-assets>
+    <a-assets timeout="120000"></a-assets>
 
     <a-camera position="0 4 10"></a-camera>
 
     <xrextras-named-image-target name="painting">
-      <a-entity painting-resurrection="config: assets/meta/layers.json"></a-entity>
+      <a-entity painting-resurrection="config: assets/meta/video-layers.json"></a-entity>
     </xrextras-named-image-target>
 
   </a-scene>
