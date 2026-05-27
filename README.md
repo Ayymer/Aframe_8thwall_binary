@@ -58,6 +58,12 @@ See the [A-Frame documentation](https://aframe.io/docs/) for shapes, models, vid
 
 ## Troubleshooting
 
+- **Pull fails with "divergent branches"** — Firebase Studio still has old history from before a force push. In the Firebase Studio **terminal**, run:
+  ```bash
+  git fetch origin && git reset --hard origin/main
+  ```
+  This replaces the local copy with GitHub. Safe if you haven't made uncommitted edits in Firebase Studio.
+
 - **Camera not working** — page must be HTTPS (Firebase Studio provides this automatically)
 - **Image not detected** — print clearly, avoid glare, check `width`/`height` in `index.html` match your image file
 - **Debug on phone** — add before `</body>`:
