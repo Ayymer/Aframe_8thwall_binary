@@ -83,37 +83,7 @@
   </script>
 </head>
 <body>
-  <div id="video-pool" aria-hidden="true">
-    <!-- WebM first: Arc/Chrome. MP4 fallback: Safari and older browsers. -->
-    <video id="video-flower-1" loop muted playsinline webkit-playsinline preload="metadata">
-      <source src="assets/video/flower-1.webm" type="video/webm">
-      <source src="assets/video/flower-1.mp4" type="video/mp4">
-    </video>
-    <video id="video-flower-2" loop muted playsinline webkit-playsinline preload="metadata">
-      <source src="assets/video/flower-2.webm" type="video/webm">
-      <source src="assets/video/flower-2.mp4" type="video/mp4">
-    </video>
-    <video id="video-flower-3" loop muted playsinline webkit-playsinline preload="metadata">
-      <source src="assets/video/flower-3.webm" type="video/webm">
-      <source src="assets/video/flower-3.mp4" type="video/mp4">
-    </video>
-    <video id="video-flower-4" loop muted playsinline webkit-playsinline preload="metadata">
-      <source src="assets/video/flower-4.webm" type="video/webm">
-      <source src="assets/video/flower-4.mp4" type="video/mp4">
-    </video>
-    <video id="video-flower-5" loop muted playsinline webkit-playsinline preload="metadata">
-      <source src="assets/video/flower-5.webm" type="video/webm">
-      <source src="assets/video/flower-5.mp4" type="video/mp4">
-    </video>
-    <video id="video-flower-6" loop muted playsinline webkit-playsinline preload="metadata">
-      <source src="assets/video/flower-6.webm" type="video/webm">
-      <source src="assets/video/flower-6.mp4" type="video/mp4">
-    </video>
-    <video id="video-flower-7" loop muted playsinline webkit-playsinline preload="metadata">
-      <source src="assets/video/flower-7.webm" type="video/webm">
-      <source src="assets/video/flower-7.mp4" type="video/mp4">
-    </video>
-  </div>
+  <div id="video-pool" aria-hidden="true"></div>
 
   <div id="scan-hud">
     <div class="status">Loading…</div>
@@ -121,56 +91,23 @@
   </div>
 
   <script>
-    // Priming: the FIRST user gesture (which on 8th Wall is the "Begin AR" tap)
-    // must call .play() on each <video> so iOS Safari permits later WebGL
-    // VideoTexture decoding. We attach a capture-phase listener on document so
-    // we run BEFORE 8th Wall's own handler, then let the event continue so its
-    // Begin button still works and camera starts normally.
+    // Capture the Begin AR tap as the user-gesture unlock for video + audio.
+    // Videos load lazily per season (2–3 at a time), not all 7 upfront.
     (function () {
       const pool = document.getElementById('video-pool');
       const debug = /(?:^|[?&])debug=1(?:&|$)/.test(window.location.search);
       if (debug) pool.classList.add('debug');
 
-      const videos = Array.from(pool.querySelectorAll('video'));
-
-      window.flowerVideoStats = {
-        primed: 0,
-        failed: 0,
-        total: videos.length,
-        errors: {},
-        tapped: false,
-      };
+      window.flowerGesturePrimed = false;
+      window.flowerVideoStats = { tapped: false, total: 7 };
 
       const prime = () => {
-        if (window.flowerVideoStats.tapped) return;
+        if (window.flowerGesturePrimed) return;
+        window.flowerGesturePrimed = true;
         window.flowerVideoStats.tapped = true;
-
-        videos.forEach((v) => {
-          v.muted = true;
-          v.playsInline = true;
-          v.loop = true;
-          // Bump preload so the bytes actually start streaming after gesture.
-          try { v.preload = 'auto'; } catch (e) {}
-          v.load();
-          const attempt = v.play();
-          if (attempt && attempt.then) {
-            attempt.then(() => {
-              window.flowerVideoStats.primed++;
-              window.dispatchEvent(new CustomEvent('flower-video-primed', {
-                detail: { id: v.id }
-              }));
-            }).catch((err) => {
-              window.flowerVideoStats.failed++;
-              window.flowerVideoStats.errors[v.id] = err && err.name;
-              console.warn('[prime]', v.id, err && err.message);
-            });
-          } else {
-            window.flowerVideoStats.primed++;
-          }
-        });
+        window.dispatchEvent(new CustomEvent('flower-gesture-primed'));
       };
 
-      // Capture phase so we always fire before any other handler swallows it.
       document.addEventListener('touchend', prime, { capture: true, once: true });
       document.addEventListener('click', prime, { capture: true, once: true });
       document.addEventListener('pointerup', prime, { capture: true, once: true });

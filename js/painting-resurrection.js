@@ -1,7 +1,10 @@
 /**
- * painting-resurrection — video overlays on the Ruysch image target.
- * iOS strategy: videos start playing on tap and never stop. Visibility
- * is controlled by shader opacity only — pausing breaks VideoTexture on iOS.
+ * painting-resurrection — seasonal video overlays on the Ruysch image target.
+ *
+ * Performance: videos are created and decoded only for the active season
+ * (typically 2–3 clips), with the next season prefetched in the background.
+ *
+ * Narrative: intro still → season 1 (sound + flowers) → … → outro still → loop.
  */
 (function () {
   const IMG_W = 809;
@@ -30,7 +33,6 @@
       throw err;
     });
 
-  // ---------- math helpers ----------
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const easeInOutCubic = (t) =>
     t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -47,7 +49,6 @@
     const sx = IMG_W / figmaPainting[0];
     const sy = IMG_H / figmaPainting[1];
 
-    // Figma exports frames as top-left + size. Convert to center for placement.
     let figCenter = null;
     let figWidth = null;
     let figHeight = null;
@@ -57,7 +58,6 @@
       figWidth = fw;
       figHeight = fh;
     } else if (layer.figmaCenter) {
-      // Legacy fields, kept for backwards compatibility.
       figCenter = layer.figmaCenter;
       figWidth = layer.figmaWidth;
     }
@@ -67,9 +67,6 @@
 
     let sizePx = layer.sizePx;
     if (!sizePx && figWidth != null && layer.videoSize) {
-      // Lock to video's native aspect ratio anchored on Figma width — the
-      // Figma frames in our file already match aspect, but this protects us
-      // if someone resizes a frame asymmetrically by accident.
       const w = figWidth * sx;
       sizePx = [w, w * (layer.videoSize[1] / layer.videoSize[0])];
     }
@@ -82,26 +79,203 @@
     return { centerPx, sizePx };
   }
 
-  function getPhase(loopMs, phases) {
-    let t = loopMs;
-    if (t < phases.stillMs) return { name: 'still', elapsed: t };
-    t -= phases.stillMs;
-    if (t < phases.animateMs) return { name: 'animate', elapsed: t, localT: t / phases.animateMs };
-    t -= phases.animateMs;
-    return { name: 'endStill', elapsed: t, localT: t / phases.endStillMs };
-  }
-
-  function phaseOpacity(phase, phases) {
-    if (phase.name === 'still') return 0;
-    if (phase.name === 'animate') {
-      return easeInOutCubic(clamp(phase.elapsed / phases.fadeMs, 0, 1));
-    }
-    return easeInOutCubic(1 - clamp(phase.elapsed / phases.fadeMs, 0, 1));
-  }
-
   function resolveChroma(global, layer) {
     return Object.assign({}, global || {}, layer && layer.chromaKey ? layer.chromaKey : {});
   }
+
+  function buildTimeline(cfg) {
+    const seq = cfg.sequence || {};
+    const intro = seq.introStillMs != null ? seq.introStillMs : 1500;
+    const outro = seq.outroStillMs != null ? seq.outroStillMs : 2500;
+    const between = seq.betweenMs != null ? seq.betweenMs : 600;
+    const fade = seq.fadeMs != null ? seq.fadeMs : 900;
+    const seasons = cfg.seasons || [];
+    const segments = [];
+    let t = 0;
+
+    segments.push({ kind: 'intro', start: t, end: t + intro });
+    t += intro;
+
+    seasons.forEach((season, index) => {
+      const hold = season.holdMs != null ? season.holdMs : 6000;
+      segments.push({ kind: 'fadeIn', seasonIndex: index, start: t, end: t + fade });
+      t += fade;
+      segments.push({ kind: 'hold', seasonIndex: index, start: t, end: t + hold });
+      t += hold;
+      segments.push({ kind: 'fadeOut', seasonIndex: index, start: t, end: t + fade });
+      t += fade;
+      if (index < seasons.length - 1) {
+        segments.push({ kind: 'between', start: t, end: t + between });
+        t += between;
+      }
+    });
+
+    segments.push({ kind: 'outro', start: t, end: t + outro });
+    t += outro;
+
+    return { segments, loopDurationMs: t, fadeMs: fade };
+  }
+
+  function getTimelineState(clock, timeline) {
+    const loopMs = ((clock % timeline.loopDurationMs) + timeline.loopDurationMs) % timeline.loopDurationMs;
+    const seg = timeline.segments.find((s) => loopMs >= s.start && loopMs < s.end) ||
+      timeline.segments[timeline.segments.length - 1];
+    const elapsed = loopMs - seg.start;
+    const duration = seg.end - seg.start;
+    const fadeMs = timeline.fadeMs;
+
+    if (seg.kind === 'intro' || seg.kind === 'between' || seg.kind === 'outro') {
+      return {
+        kind: seg.kind,
+        seasonIndex: -1,
+        layerOpacity: 0,
+        label: seg.kind === 'intro' ? 'Nature morte' : seg.kind === 'outro' ? 'Returning…' : 'Pause',
+      };
+    }
+
+    if (seg.kind === 'hold') {
+      return {
+        kind: seg.kind,
+        seasonIndex: seg.seasonIndex,
+        layerOpacity: 1,
+        label: null,
+      };
+    }
+
+    if (seg.kind === 'fadeIn') {
+      return {
+        kind: seg.kind,
+        seasonIndex: seg.seasonIndex,
+        layerOpacity: easeInOutCubic(clamp(elapsed / fadeMs, 0, 1)),
+        label: null,
+      };
+    }
+
+    return {
+      kind: seg.kind,
+      seasonIndex: seg.seasonIndex,
+      layerOpacity: easeInOutCubic(1 - clamp(elapsed / fadeMs, 0, 1)),
+      label: null,
+    };
+  }
+
+  function waitForVideoEvent(video, eventName) {
+    return new Promise((resolve) => {
+      if (eventName === 'canplay' && video.readyState >= 3) {
+        resolve();
+        return;
+      }
+      const onReady = () => {
+        video.removeEventListener(eventName, onReady);
+        resolve();
+      };
+      video.addEventListener(eventName, onReady, { once: true });
+    });
+  }
+
+  // ---------- lazy video pool ----------
+  const VideoPool = {
+    poolEl: null,
+    byId: new Map(),
+    layerByVideoId: new Map(),
+    loaded: new Set(),
+    playing: new Set(),
+
+    init() {
+      this.poolEl = document.getElementById('video-pool');
+    },
+
+    registerLayer(layer) {
+      this.layerByVideoId.set(layer.videoId, layer);
+    },
+
+    createElement(layer) {
+      if (this.byId.has(layer.videoId)) return this.byId.get(layer.videoId);
+
+      const video = document.createElement('video');
+      video.id = layer.videoId;
+      video.loop = true;
+      video.muted = true;
+      video.playsInline = true;
+      video.setAttribute('playsinline', '');
+      video.setAttribute('webkit-playsinline', '');
+      video.preload = 'none';
+
+      if (layer.srcWebm) {
+        const webm = document.createElement('source');
+        webm.src = layer.srcWebm;
+        webm.type = 'video/webm';
+        video.appendChild(webm);
+      }
+      if (layer.src) {
+        const mp4 = document.createElement('source');
+        mp4.src = layer.src;
+        mp4.type = 'video/mp4';
+        video.appendChild(mp4);
+      }
+
+      this.poolEl.appendChild(video);
+      this.byId.set(layer.videoId, video);
+      return video;
+    },
+
+    async loadLayers(layerIds, layersById) {
+      const tasks = layerIds.map(async (id) => {
+        const layer = layersById.get(id);
+        if (!layer) return null;
+        const video = this.createElement(layer);
+        if (this.loaded.has(layer.videoId)) return video;
+        video.load();
+        await waitForVideoEvent(video, 'loadedmetadata');
+        await waitForVideoEvent(video, 'canplay');
+        this.loaded.add(layer.videoId);
+        window.dispatchEvent(new CustomEvent('flower-video-ready', {
+          detail: { id: layer.videoId },
+        }));
+        return video;
+      });
+      return Promise.all(tasks);
+    },
+
+    async playLayers(layerIds, layersById) {
+      const videos = await this.loadLayers(layerIds, layersById);
+      await Promise.all(videos.filter(Boolean).map(async (video) => {
+        if (!video.paused) {
+          this.playing.add(video.id);
+          return;
+        }
+        try {
+          await video.play();
+          this.playing.add(video.id);
+        } catch (err) {
+          console.warn('[video-pool] play failed', video.id, err && err.message);
+        }
+      }));
+    },
+
+    pauseExcept(keepVideoIds) {
+      const keep = new Set(keepVideoIds);
+      this.byId.forEach((video, id) => {
+        if (keep.has(id)) return;
+        if (!video.paused) video.pause();
+        this.playing.delete(id);
+      });
+    },
+
+    prefetch(layerIds, layersById) {
+      this.loadLayers(layerIds, layersById).catch((err) => {
+        console.warn('[video-pool] prefetch failed', err);
+      });
+    },
+
+    stats() {
+      return {
+        created: this.byId.size,
+        loaded: this.loaded.size,
+        playing: this.playing.size,
+      };
+    },
+  };
 
   // ---------- chroma shader ----------
   function createChromaMaterial(texture, chroma, opacity) {
@@ -194,17 +368,29 @@
       } catch (err) {
         this.chroma = {};
       }
-      this.video = document.getElementById(this.data.videoId);
+      this.video = null;
       this.bound = false;
       this.errorCode = 0;
       this.errorMsg = null;
       this.tryBind = this.tryBind.bind(this);
+      this.onVideoReady = (e) => {
+        if (e.detail.id !== this.data.videoId) return;
+        this.attachVideo();
+      };
 
+      window.addEventListener('flower-video-ready', this.onVideoReady);
+      this.attachVideo();
+    },
+
+    attachVideo() {
+      if (this.bound) return;
+      this.video = document.getElementById(this.data.videoId);
       if (!this.video) {
-        this.errorMsg = 'no-element';
+        this.errorMsg = 'pending';
         return;
       }
 
+      this.errorMsg = null;
       this.video.addEventListener('loadedmetadata', this.tryBind);
       this.video.addEventListener('loadeddata', this.tryBind);
       this.video.addEventListener('canplay', this.tryBind);
@@ -214,12 +400,11 @@
         this.errorCode = e ? e.code : -1;
         this.errorMsg = e ? `code ${e.code}` : 'error';
       });
+      this.tryBind();
     },
 
     tryBind() {
       if (this.bound || !this.video) return;
-
-      // Need both dimensions and a frame ready
       if (this.video.videoWidth === 0 || this.video.videoHeight === 0) return;
 
       const mesh = this.el.getObject3D('mesh');
@@ -265,6 +450,7 @@
     },
 
     remove() {
+      window.removeEventListener('flower-video-ready', this.onVideoReady);
       if (this.video) {
         this.video.removeEventListener('loadedmetadata', this.tryBind);
         this.video.removeEventListener('loadeddata', this.tryBind);
@@ -283,16 +469,12 @@
         .then(() => setHud('Ready', 'Tap Begin AR, then point camera at the painting'))
         .catch(() => {});
 
-      this.targetFound = false;
-
       this.el.sceneEl.addEventListener('xrimagefound', (e) => {
         if (e.detail.name !== TARGET_NAME) return;
-        this.targetFound = true;
         this.el.sceneEl.emit('painting-target-found');
       });
       this.el.sceneEl.addEventListener('xrimagelost', (e) => {
         if (e.detail.name !== TARGET_NAME) return;
-        this.targetFound = false;
         this.el.sceneEl.emit('painting-target-lost');
       });
     },
@@ -305,26 +487,51 @@
     init() {
       this.clock = 0;
       this.config = null;
+      this.timeline = null;
       this.layers = [];
-      this.lastPhase = null;
+      this.layersById = new Map();
       this.targetFound = false;
+      this.running = false;
       this.hudCounter = 0;
+      this.activeSeasonIndex = -2;
+      this.lastSeasonKey = null;
+      this.seasonAudio = new Audio();
+      this.seasonAudio.preload = 'auto';
+
+      VideoPool.init();
 
       this.onFound = () => {
         this.targetFound = true;
-        this.clock = 0;
-        this.lastPhase = null;
-        this.playAll();
+        if (window.flowerGesturePrimed) this.startSequence();
       };
       this.onLost = () => {
         this.targetFound = false;
+        this.running = false;
+        this.activeSeasonIndex = -2;
+        this.lastSeasonKey = null;
+        this.seasonAudio.pause();
+        VideoPool.pauseExcept([]);
+        this.layers.forEach(({ el }) => {
+          const c = el.components['flower-video'];
+          if (c) c.setOpacity(0);
+        });
       };
+      this.onGesture = () => {
+        if (this.targetFound) this.startSequence();
+      };
+
       this.el.sceneEl.addEventListener('painting-target-found', this.onFound);
       this.el.sceneEl.addEventListener('painting-target-lost', this.onLost);
+      window.addEventListener('flower-gesture-primed', this.onGesture);
 
       configPromise
         .then((cfg) => {
           this.config = cfg;
+          this.timeline = buildTimeline(cfg);
+          cfg.layers.forEach((layer) => {
+            this.layersById.set(layer.id, layer);
+            VideoPool.registerLayer(layer);
+          });
           this.buildLayers(cfg);
         })
         .catch((err) => console.error('[painting-resurrection]', err));
@@ -350,84 +557,134 @@
           opacity: 0,
         });
         this.el.appendChild(plane);
-        this.layers.push({ el: plane });
+        this.layers.push({ el: plane, id: layer.id, videoId: layer.videoId });
       });
     },
 
-    playAll() {
-      this.layers.forEach(({ el }) => {
-        const c = el.components['flower-video'];
-        if (c) c.play();
-      });
+    startSequence() {
+      if (!this.config || this.running) return;
+      this.running = true;
+      this.clock = 0;
+      this.activeSeasonIndex = -2;
+      this.lastSeasonKey = null;
+      this.enterSeason(-1, []);
     },
 
-    getOpacity() {
-      if (!this.config || !this.targetFound) return 0;
-      return phaseOpacity(getPhase(this.clock, this.config.phases), this.config.phases);
+    getActiveLayerIds(seasonIndex) {
+      if (seasonIndex < 0) return [];
+      const season = this.config.seasons[seasonIndex];
+      return season && season.layers ? season.layers : [];
+    },
+
+    getVideoIdsForLayers(layerIds) {
+      return layerIds
+        .map((id) => this.layersById.get(id))
+        .filter(Boolean)
+        .map((layer) => layer.videoId);
+    },
+
+    enterSeason(seasonIndex, layerIds) {
+      const videoIds = this.getVideoIdsForLayers(layerIds);
+      const seasonKey = `${seasonIndex}:${layerIds.join(',')}`;
+
+      VideoPool.pauseExcept(videoIds);
+
+      if (layerIds.length) {
+        VideoPool.playLayers(layerIds, this.layersById).then(() => {
+          this.layers.forEach(({ id, el }) => {
+            if (!layerIds.includes(id)) return;
+            const c = el.components['flower-video'];
+            if (c) c.play();
+          });
+        });
+      }
+
+      const nextSeason = this.config.seasons[seasonIndex + 1];
+      if (nextSeason && nextSeason.layers && nextSeason.layers.length) {
+        VideoPool.prefetch(nextSeason.layers, this.layersById);
+      }
+
+      if (seasonKey !== this.lastSeasonKey) {
+        this.lastSeasonKey = seasonKey;
+        this.playSeasonSound(seasonIndex);
+      }
+
+      this.activeSeasonIndex = seasonIndex;
+    },
+
+    playSeasonSound(seasonIndex) {
+      this.seasonAudio.pause();
+      if (seasonIndex < 0) return;
+      const season = this.config.seasons[seasonIndex];
+      if (!season || !season.sound) return;
+      this.seasonAudio.src = season.sound;
+      this.seasonAudio.currentTime = 0;
+      const attempt = this.seasonAudio.play();
+      if (attempt && attempt.catch) {
+        attempt.catch((err) => console.warn('[season-audio]', season.id, err && err.message));
+      }
     },
 
     tick(_time, delta) {
-      if (!this.config || !this.layers.length) return;
+      if (!this.config || !this.timeline || !this.layers.length) return;
 
-      if (this.targetFound) {
-        this.clock = (this.clock + delta) % this.config.loopDurationMs;
+      if (this.targetFound && this.running) {
+        this.clock += delta;
+        if (this.clock >= this.timeline.loopDurationMs) {
+          this.clock = 0;
+          this.lastSeasonKey = null;
+        }
       }
-      const phase = this.targetFound ? getPhase(this.clock, this.config.phases) : null;
-      const opacity = this.getOpacity();
 
-      let bound = 0;
-      let playing = 0;
-      let withDims = 0;
-      let readyState = 0;
-      const errBuckets = { 1: 0, 2: 0, 3: 0, 4: 0, '-1': 0 };
-      let totalErr = 0;
+      const state = this.running && this.targetFound
+        ? getTimelineState(this.clock, this.timeline)
+        : { kind: 'idle', seasonIndex: -1, layerOpacity: 0, label: 'Nature morte' };
 
-      this.layers.forEach(({ el }) => {
+      const activeLayerIds = this.getActiveLayerIds(state.seasonIndex);
+      const shouldAnimate = state.layerOpacity > 0.001 && activeLayerIds.length > 0;
+
+      if (this.running && this.targetFound) {
+        const seasonKey = `${state.seasonIndex}:${activeLayerIds.join(',')}:${state.kind}`;
+        if (seasonKey !== this.lastSeasonKey) {
+          if (state.kind === 'fadeIn' || state.kind === 'hold') {
+            this.enterSeason(state.seasonIndex, activeLayerIds);
+          } else if (state.layerOpacity <= 0.001 && state.kind !== 'hold') {
+            this.enterSeason(-1, []);
+            this.lastSeasonKey = seasonKey;
+          }
+        }
+      }
+
+      this.layers.forEach(({ id, el }) => {
         const c = el.components['flower-video'];
         if (!c) return;
-        c.setOpacity(opacity);
-        if (c.bound) bound++;
-        if (c.errorCode) {
-          errBuckets[c.errorCode] = (errBuckets[c.errorCode] || 0) + 1;
-          totalErr++;
-        }
-        if (c.video) {
-          if (c.video.videoWidth > 0) withDims++;
-          if (!c.video.paused) playing++;
-          readyState = Math.max(readyState, c.video.readyState);
-        }
-        if (this.targetFound && opacity > 0.001 && c.video && c.video.paused) c.play();
+        const inSeason = activeLayerIds.includes(id) && shouldAnimate;
+        c.setOpacity(inSeason ? state.layerOpacity : 0);
+        if (inSeason && c.video && c.video.paused) c.play();
       });
 
       this.hudCounter += delta;
-      if (this.hudCounter < 300) return;
+      if (this.hudCounter < 400) return;
       this.hudCounter = 0;
 
-      const stats = window.flowerVideoStats || {};
+      const pool = VideoPool.stats();
+      const season = state.seasonIndex >= 0 ? this.config.seasons[state.seasonIndex] : null;
       const status = this.targetFound
-        ? `Painting found · ${phase.name}`
-        : (stats.tapped ? 'Looking for painting' : 'Waiting for tap');
-
-      const errLabels = { 1: 'ABORT', 2: 'NET', 3: 'DEC', 4: 'SRC', '-1': 'UNK' };
-      const errSummary = Object.keys(errBuckets)
-        .filter((k) => errBuckets[k] > 0)
-        .map((k) => `${errBuckets[k]}×${errLabels[k]}`)
-        .join(',');
+        ? (season ? `${season.label} · ${state.kind}` : state.label || state.kind)
+        : (window.flowerGesturePrimed ? 'Looking for painting' : 'Waiting for tap');
 
       const detail =
-        `tap ${stats.primed || 0}/${stats.total || 7}` +
-        ` · fail ${stats.failed || 0}` +
-        ` · dims ${withDims}/${this.layers.length}` +
-        ` · bound ${bound}/${this.layers.length}` +
-        ` · play ${playing}/${this.layers.length}` +
-        ` · rs ${readyState}` +
-        (totalErr ? ` · err ${errSummary}` : '');
+        `videos ${pool.loaded}/7 loaded · ${pool.playing} playing` +
+        (this.running ? ` · loop ${Math.round(this.clock / 1000)}s` : '');
+
       setHud(status, detail);
     },
 
     remove() {
       this.el.sceneEl.removeEventListener('painting-target-found', this.onFound);
       this.el.sceneEl.removeEventListener('painting-target-lost', this.onLost);
+      window.removeEventListener('flower-gesture-primed', this.onGesture);
+      this.seasonAudio.pause();
     },
   });
 })();
