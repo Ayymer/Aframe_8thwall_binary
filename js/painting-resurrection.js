@@ -89,6 +89,7 @@
     const outro = seq.outroStillMs != null ? seq.outroStillMs : 2500;
     const between = seq.betweenMs != null ? seq.betweenMs : 600;
     const fade = seq.fadeMs != null ? seq.fadeMs : 900;
+    const defaultHold = seq.audioMs != null ? seq.audioMs : 4000;
     const seasons = cfg.seasons || [];
     const segments = [];
     let t = 0;
@@ -97,7 +98,7 @@
     t += intro;
 
     seasons.forEach((season, index) => {
-      const hold = season.holdMs != null ? season.holdMs : 6000;
+      const hold = season.holdMs != null ? season.holdMs : defaultHold;
       segments.push({ kind: 'fadeIn', seasonIndex: index, start: t, end: t + fade });
       t += fade;
       segments.push({ kind: 'hold', seasonIndex: index, start: t, end: t + hold });
@@ -113,7 +114,23 @@
     segments.push({ kind: 'outro', start: t, end: t + outro });
     t += outro;
 
-    return { segments, loopDurationMs: t, fadeMs: fade };
+    return { segments, loopDurationMs: t, fadeMs: fade, defaultHold };
+  }
+
+  /** Ping-pong 0→1→0 over the hold window (synced to 4s audio). */
+  function getBlossomPhase(clock, timeline, seasonIndex) {
+    if (seasonIndex < 0) return 0;
+    const loopMs = ((clock % timeline.loopDurationMs) + timeline.loopDurationMs) %
+      timeline.loopDurationMs;
+    const holdSeg = timeline.segments.find(
+      (s) => s.kind === 'hold' && s.seasonIndex === seasonIndex
+    );
+    if (!holdSeg || loopMs < holdSeg.start || loopMs >= holdSeg.end) return 0;
+    const elapsed = loopMs - holdSeg.start;
+    const duration = holdSeg.end - holdSeg.start;
+    const t = elapsed / duration;
+    if (t < 0.5) return t * 2;
+    return 1 - (t - 0.5) * 2;
   }
 
   function getTimelineState(clock, timeline) {
@@ -194,7 +211,7 @@
 
       const video = document.createElement('video');
       video.id = layer.videoId;
-      video.loop = true;
+      video.loop = false;
       video.muted = true;
       video.playsInline = true;
       video.setAttribute('playsinline', '');
@@ -239,18 +256,15 @@
 
     async playLayers(layerIds, layersById) {
       const videos = await this.loadLayers(layerIds, layersById);
-      await Promise.all(videos.filter(Boolean).map(async (video) => {
-        if (!video.paused) {
-          this.playing.add(video.id);
-          return;
-        }
+      videos.filter(Boolean).forEach((video) => {
+        video.pause();
         try {
-          await video.play();
-          this.playing.add(video.id);
+          video.currentTime = 0;
         } catch (err) {
-          console.warn('[video-pool] play failed', video.id, err && err.message);
+          /* ignore seek before metadata */
         }
-      }));
+        this.playing.add(video.id);
+      });
     },
 
     pauseExcept(keepVideoIds) {
@@ -391,6 +405,7 @@
       }
 
       this.errorMsg = null;
+      this.lastBlossomPhase = -1;
       this.video.addEventListener('loadedmetadata', this.tryBind);
       this.video.addEventListener('loadeddata', this.tryBind);
       this.video.addEventListener('canplay', this.tryBind);
@@ -435,16 +450,34 @@
       this.applyOpacity(opacity);
     },
 
-    play() {
-      if (!this.video) return;
-      if (this.video.paused) {
-        const a = this.video.play();
-        if (a && a.catch) a.catch(() => {});
+    /** Scrub video: 0 = nature morte, 1 = full bloom, then back to 0. */
+    setBlossomPhase(phase) {
+      if (!this.video || !this.bound) return;
+      const p = clamp(phase, 0, 1);
+      if (Math.abs(p - this.lastBlossomPhase) < 0.0005) return;
+      this.lastBlossomPhase = p;
+      if (!this.video.paused) this.video.pause();
+      const duration = this.video.duration;
+      if (duration && isFinite(duration)) {
+        const t = p * Math.max(0, duration - 0.04);
+        if (Math.abs(this.video.currentTime - t) > 0.02) {
+          try {
+            this.video.currentTime = t;
+          } catch (err) {
+            /* seek can fail while buffering */
+          }
+        }
       }
+      if (this.texture) this.texture.needsUpdate = true;
+    },
+
+    resetBlossom() {
+      this.lastBlossomPhase = -1;
+      this.setBlossomPhase(0);
     },
 
     tick() {
-      if (this.texture && this.video && !this.video.paused) {
+      if (this.texture && this.bound && this.data.opacity > 0.001) {
         this.texture.needsUpdate = true;
       }
     },
@@ -495,6 +528,7 @@
       this.hudCounter = 0;
       this.activeSeasonIndex = -2;
       this.lastSeasonKey = null;
+      this.lastAudioKey = null;
       this.seasonAudio = new Audio();
       this.seasonAudio.preload = 'auto';
 
@@ -509,6 +543,7 @@
         this.running = false;
         this.activeSeasonIndex = -2;
         this.lastSeasonKey = null;
+        this.lastAudioKey = null;
         this.seasonAudio.pause();
         VideoPool.pauseExcept([]);
         this.layers.forEach(({ el }) => {
@@ -567,6 +602,7 @@
       this.clock = 0;
       this.activeSeasonIndex = -2;
       this.lastSeasonKey = null;
+      this.lastAudioKey = null;
       this.enterSeason(-1, []);
     },
 
@@ -585,7 +621,6 @@
 
     enterSeason(seasonIndex, layerIds) {
       const videoIds = this.getVideoIdsForLayers(layerIds);
-      const seasonKey = `${seasonIndex}:${layerIds.join(',')}`;
 
       VideoPool.pauseExcept(videoIds);
 
@@ -594,7 +629,7 @@
           this.layers.forEach(({ id, el }) => {
             if (!layerIds.includes(id)) return;
             const c = el.components['flower-video'];
-            if (c) c.play();
+            if (c) c.resetBlossom();
           });
         });
       }
@@ -602,11 +637,6 @@
       const nextSeason = this.config.seasons[seasonIndex + 1];
       if (nextSeason && nextSeason.layers && nextSeason.layers.length) {
         VideoPool.prefetch(nextSeason.layers, this.layersById);
-      }
-
-      if (seasonKey !== this.lastSeasonKey) {
-        this.lastSeasonKey = seasonKey;
-        this.playSeasonSound(seasonIndex);
       }
 
       this.activeSeasonIndex = seasonIndex;
@@ -633,6 +663,7 @@
         if (this.clock >= this.timeline.loopDurationMs) {
           this.clock = 0;
           this.lastSeasonKey = null;
+          this.lastAudioKey = null;
         }
       }
 
@@ -648,19 +679,36 @@
         if (seasonKey !== this.lastSeasonKey) {
           if (state.kind === 'fadeIn' || state.kind === 'hold') {
             this.enterSeason(state.seasonIndex, activeLayerIds);
+            this.lastSeasonKey = seasonKey;
           } else if (state.layerOpacity <= 0.001 && state.kind !== 'hold') {
             this.enterSeason(-1, []);
             this.lastSeasonKey = seasonKey;
           }
         }
+
+        if (state.kind === 'hold' && state.seasonIndex >= 0) {
+          const audioKey = `audio:${state.seasonIndex}`;
+          if (audioKey !== this.lastAudioKey) {
+            this.lastAudioKey = audioKey;
+            this.playSeasonSound(state.seasonIndex);
+          }
+        }
       }
+
+      const blossomPhase = state.kind === 'hold' && state.seasonIndex >= 0
+        ? getBlossomPhase(this.clock, this.timeline, state.seasonIndex)
+        : 0;
 
       this.layers.forEach(({ id, el }) => {
         const c = el.components['flower-video'];
         if (!c) return;
         const inSeason = activeLayerIds.includes(id) && shouldAnimate;
         c.setOpacity(inSeason ? state.layerOpacity : 0);
-        if (inSeason && c.video && c.video.paused) c.play();
+        if (inSeason) {
+          c.setBlossomPhase(state.kind === 'hold' ? blossomPhase : 0);
+        } else {
+          c.resetBlossom();
+        }
       });
 
       this.hudCounter += delta;
