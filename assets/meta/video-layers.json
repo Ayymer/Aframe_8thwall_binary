@@ -21,6 +21,7 @@
       "videoId": "video-flower-1",
       "src": "assets/video/flower-1.mp4",
       "figmaCenter": [969.47, 819.88],
+      "figmaWidth": 213,
       "videoSize": [834, 1112],
       "zOrder": 2
     },
@@ -30,6 +31,7 @@
       "videoId": "video-flower-2",
       "src": "assets/video/flower-2.mp4",
       "figmaCenter": [800.5, 1493.3],
+      "figmaWidth": 395.02,
       "videoSize": [834, 1112],
       "zOrder": 4
     },
@@ -39,6 +41,7 @@
       "videoId": "video-flower-3",
       "src": "assets/video/flower-3.mp4",
       "figmaCenter": [601.25, 788.58],
+      "figmaWidth": 221.42,
       "videoSize": [960, 960],
       "zOrder": 3
     },
@@ -48,6 +51,7 @@
       "videoId": "video-flower-4",
       "src": "assets/video/flower-4.mp4",
       "figmaCenter": [441.69, 975.82],
+      "figmaWidth": 270.28,
       "videoSize": [960, 960],
       "zOrder": 1
     },
@@ -57,6 +61,7 @@
       "videoId": "video-flower-5",
       "src": "assets/video/flower-5.mp4",
       "figmaCenter": [662.79, 220.15],
+      "figmaWidth": 396.99,
       "videoSize": [960, 960],
       "zOrder": 5
     },
@@ -66,6 +71,7 @@
       "videoId": "video-flower-6",
       "src": "assets/video/flower-6.mp4",
       "figmaCenter": [476.71, 1497.57],
+      "figmaWidth": 249.08,
       "videoSize": [960, 960],
       "zOrder": 0
     },
@@ -75,6 +81,7 @@
       "videoId": "video-flower-7",
       "src": "assets/video/flower-7.mp4",
       "figmaCenter": [468.44, 47.76],
+      "figmaWidth": 316,
       "videoSize": [960, 960],
       "zOrder": 6
     }

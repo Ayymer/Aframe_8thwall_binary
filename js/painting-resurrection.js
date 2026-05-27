@@ -30,10 +30,17 @@
       layer.figmaCenter[0] * scaleX,
       layer.figmaCenter[1] * scaleY,
     ];
-    const sizePx = layer.sizePx || [
-      layer.videoSize[0] * scaleX,
-      layer.videoSize[1] * scaleY,
-    ];
+
+    let sizePx = layer.sizePx;
+    if (!sizePx && layer.figmaWidth != null && layer.videoSize) {
+      const widthPx = layer.figmaWidth * scaleX;
+      const aspect = layer.videoSize[1] / layer.videoSize[0];
+      sizePx = [widthPx, widthPx * aspect];
+    }
+    if (!sizePx && layer.videoSize) {
+      sizePx = [layer.videoSize[0] * scaleX, layer.videoSize[1] * scaleY];
+    }
+
     return { centerPx, sizePx };
   }
 
