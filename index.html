@@ -84,13 +84,35 @@
 </head>
 <body>
   <div id="video-pool" aria-hidden="true">
-    <video id="video-flower-1" src="assets/video/flower-1.mp4" loop muted playsinline webkit-playsinline preload="metadata"></video>
-    <video id="video-flower-2" src="assets/video/flower-2.mp4" loop muted playsinline webkit-playsinline preload="metadata"></video>
-    <video id="video-flower-3" src="assets/video/flower-3.mp4" loop muted playsinline webkit-playsinline preload="metadata"></video>
-    <video id="video-flower-4" src="assets/video/flower-4.mp4" loop muted playsinline webkit-playsinline preload="metadata"></video>
-    <video id="video-flower-5" src="assets/video/flower-5.mp4" loop muted playsinline webkit-playsinline preload="metadata"></video>
-    <video id="video-flower-6" src="assets/video/flower-6.mp4" loop muted playsinline webkit-playsinline preload="metadata"></video>
-    <video id="video-flower-7" src="assets/video/flower-7.mp4" loop muted playsinline webkit-playsinline preload="metadata"></video>
+    <!-- WebM first: Arc/Chrome. MP4 fallback: Safari and older browsers. -->
+    <video id="video-flower-1" loop muted playsinline webkit-playsinline preload="metadata">
+      <source src="assets/video/flower-1.webm" type="video/webm">
+      <source src="assets/video/flower-1.mp4" type="video/mp4">
+    </video>
+    <video id="video-flower-2" loop muted playsinline webkit-playsinline preload="metadata">
+      <source src="assets/video/flower-2.webm" type="video/webm">
+      <source src="assets/video/flower-2.mp4" type="video/mp4">
+    </video>
+    <video id="video-flower-3" loop muted playsinline webkit-playsinline preload="metadata">
+      <source src="assets/video/flower-3.webm" type="video/webm">
+      <source src="assets/video/flower-3.mp4" type="video/mp4">
+    </video>
+    <video id="video-flower-4" loop muted playsinline webkit-playsinline preload="metadata">
+      <source src="assets/video/flower-4.webm" type="video/webm">
+      <source src="assets/video/flower-4.mp4" type="video/mp4">
+    </video>
+    <video id="video-flower-5" loop muted playsinline webkit-playsinline preload="metadata">
+      <source src="assets/video/flower-5.webm" type="video/webm">
+      <source src="assets/video/flower-5.mp4" type="video/mp4">
+    </video>
+    <video id="video-flower-6" loop muted playsinline webkit-playsinline preload="metadata">
+      <source src="assets/video/flower-6.webm" type="video/webm">
+      <source src="assets/video/flower-6.mp4" type="video/mp4">
+    </video>
+    <video id="video-flower-7" loop muted playsinline webkit-playsinline preload="metadata">
+      <source src="assets/video/flower-7.webm" type="video/webm">
+      <source src="assets/video/flower-7.mp4" type="video/mp4">
+    </video>
   </div>
 
   <div id="scan-hud">
