@@ -19,6 +19,7 @@
       "id": "flower-1",
       "label": "Left rose cluster",
       "videoId": "video-flower-1",
+      "src": "assets/video/flower-1.mp4",
       "figmaCenter": [969.47, 819.88],
       "videoSize": [834, 1112],
       "zOrder": 2
@@ -27,6 +28,7 @@
       "id": "flower-2",
       "label": "Sunflower region",
       "videoId": "video-flower-2",
+      "src": "assets/video/flower-2.mp4",
       "figmaCenter": [800.5, 1493.3],
       "videoSize": [834, 1112],
       "zOrder": 4
@@ -35,6 +37,7 @@
       "id": "flower-3",
       "label": "Pink rose",
       "videoId": "video-flower-3",
+      "src": "assets/video/flower-3.mp4",
       "figmaCenter": [601.25, 788.58],
       "videoSize": [960, 960],
       "zOrder": 3
@@ -43,6 +46,7 @@
       "id": "flower-4",
       "label": "White rose",
       "videoId": "video-flower-4",
+      "src": "assets/video/flower-4.mp4",
       "figmaCenter": [441.69, 975.82],
       "videoSize": [960, 960],
       "zOrder": 1
@@ -51,6 +55,7 @@
       "id": "flower-5",
       "label": "Tulip",
       "videoId": "video-flower-5",
+      "src": "assets/video/flower-5.mp4",
       "figmaCenter": [662.79, 220.15],
       "videoSize": [960, 960],
       "zOrder": 5
@@ -59,6 +64,7 @@
       "id": "flower-6",
       "label": "Honeysuckle cluster",
       "videoId": "video-flower-6",
+      "src": "assets/video/flower-6.mp4",
       "figmaCenter": [476.71, 1497.57],
       "videoSize": [960, 960],
       "zOrder": 0
@@ -67,6 +73,7 @@
       "id": "flower-7",
       "label": "Poppy",
       "videoId": "video-flower-7",
+      "src": "assets/video/flower-7.mp4",
       "figmaCenter": [468.44, 47.76],
       "videoSize": [960, 960],
       "zOrder": 6

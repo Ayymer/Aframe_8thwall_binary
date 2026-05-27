@@ -128,10 +128,9 @@
         this.video.crossOrigin = 'anonymous';
       }
 
-      this.video.addEventListener('loadeddata', this.bindVideo);
-      if (this.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        this.bindVideo();
-      }
+      // Prime decode when a frame is ready — do not block scene load.
+      this.video.addEventListener('loadeddata', this.bindVideo, { once: true });
+      this.video.load();
     },
 
     bindVideo() {
@@ -153,8 +152,10 @@
       if (prime && prime.then) {
         prime
           .then(() => {
-            this.video.pause();
-            this.video.currentTime = 0;
+            if (this.data.opacity <= 0.001) {
+              this.video.pause();
+              this.video.currentTime = 0;
+            }
           })
           .catch(() => {});
       }
@@ -198,6 +199,7 @@
           })
           .then((cfg) => {
             this.config = cfg;
+            this.createVideoElements(cfg);
             this.createVideoLayers(cfg);
           })
           .catch((err) => console.error('[painting-resurrection]', err));
@@ -208,6 +210,33 @@
       } else {
         scene.addEventListener('loaded', start, { once: true });
       }
+    },
+
+    createVideoElements(cfg) {
+      let pool = document.getElementById('video-pool');
+      if (!pool) {
+        pool = document.createElement('div');
+        pool.id = 'video-pool';
+        pool.setAttribute('aria-hidden', 'true');
+        pool.style.cssText = 'position:fixed;width:0;height:0;overflow:hidden;opacity:0;pointer-events:none';
+        document.body.appendChild(pool);
+      }
+
+      cfg.layers.forEach((layer) => {
+        if (document.getElementById(layer.videoId)) return;
+
+        const video = document.createElement('video');
+        video.id = layer.videoId;
+        video.src = layer.src;
+        video.crossOrigin = 'anonymous';
+        video.muted = true;
+        video.loop = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+        video.setAttribute('playsinline', '');
+        video.setAttribute('webkit-playsinline', '');
+        pool.appendChild(video);
+      });
     },
 
     createVideoLayers(cfg) {
