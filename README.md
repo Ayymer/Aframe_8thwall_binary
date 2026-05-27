@@ -25,12 +25,28 @@ This repo is a minimal starter: one HTML file, one image target (Rachel Ruysch s
 
 ## Test on your phone
 
-The camera does **not** work inside the embedded preview iframe. Open the preview URL **on your phone**:
+The preview URL is **private by default**. Opening it on your phone without setup causes a `401 Workstation does not exist` error.
 
-1. Copy the preview URL from Firebase Studio (`https://xxxx.idx.dev`)
-2. Open it in Safari (iOS) or Chrome (Android)
-3. Allow camera access when prompted
-4. Point at the printed painting — you should see a red rotating cube
+### Option A: Public preview in Firebase Studio (quickest)
+
+1. In Firebase Studio, open the **Web preview** panel
+2. In the preview toolbar, click **Share Preview Link** (next to the address bar)
+3. Enable **Make preview public**
+4. Click **Copy preview URL** or scan the **QR code** shown there
+5. Open that link on your phone in Safari/Chrome
+6. Allow camera access → scan the printed painting
+
+> The workspace must stay **open and running** in Firebase Studio while you test. Public preview turns off when you close the workspace or disable it.
+
+**If you still get 401 on phone:** sign into the **same Google account** on your phone browser that owns the Firebase Studio workspace, or use Option B below.
+
+### Option B: GitHub Pages (recommended for AR — always public)
+
+1. On GitHub: **Settings → Pages → Deploy from branch → `main` → / (root) → Save**
+2. Wait ~2 minutes, then open `https://ayymer.github.io/Aframe_8thwall_binary/` on your phone
+3. No Firebase session needed — works anytime after you push
+
+Push from Cursor → wait for Pages to rebuild → test on phone.
 
 ## Print the image target
 
@@ -64,7 +80,8 @@ See the [A-Frame documentation](https://aframe.io/docs/) for shapes, models, vid
   ```
   This replaces the local copy with GitHub. Safe if you haven't made uncommitted edits in Firebase Studio.
 
-- **Camera not working** — page must be HTTPS (Firebase Studio provides this automatically)
+- **401 on phone / "Workstation does not exist"** — preview is not public. Use **Share Preview Link → Make preview public** in Firebase Studio, or deploy via **GitHub Pages** (see above)
+- **Camera not working** — page must be HTTPS; don't use the embedded preview iframe on desktop for camera tests
 - **Image not detected** — print clearly, avoid glare, check `width`/`height` in `index.html` match your image file
 - **Debug on phone** — add before `</body>`:
   ```html
